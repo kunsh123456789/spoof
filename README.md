@@ -26,6 +26,21 @@ python app.py                      # then open http://localhost:8000
 
 Python 3.10+ is required. Nothing is installed system-wide; everything lives in `.venv`.
 
+## Make it a Mac app (double-click to open)
+
+After the Quick start works, build a launcher app from the project folder:
+
+```bash
+./make_app.sh
+```
+
+This creates `~/Applications/iPhone Location.app`. Double-click it (or drag it to your Dock): it starts the
+server in a Terminal window and opens http://localhost:8000. If the server is already running it just opens the page.
+To quit, press Ctrl+C in that Terminal window (or close it); on iOS 17+ that also restores the real location.
+
+The app points at this project folder, so if you move or rename the folder, run `./make_app.sh` again.
+To pick a different location: `./make_app.sh /Applications`.
+
 ## One-time iPhone setup
 
 1. **Connect** the iPhone to the computer with a USB cable (a data cable, not charge-only). Unlock it.
