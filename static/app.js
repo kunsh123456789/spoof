@@ -1093,6 +1093,7 @@
     else if (!a.enabled) msg = "Off: your Mac may fall asleep, which ends the fake location on iOS 17+.";
     else if (a.active) msg = `☕ Keeping your Mac awake now — ${a.reasons.join(", ")}.${a.screen ? "" : " The screen may still turn off."}`;
     else msg = "Nothing needs it right now, so your Mac may sleep when idle.";
+    try { const b = await api("GET", "/api/battery"); if (b.supported) msg += `  ${b.plugged ? "🔌" : "🔋"} Mac battery ${b.percent}%${b.charging ? " (charging)" : b.plugged ? " (plugged in)" : ""}.`; } catch { /* not important */ }
     $("awakeState").textContent = msg;
     const s = a.last_sleep, fresh = s && Date.now() / 1000 - s.woke < 900;               // show it for 15 minutes after waking
     $("sleepNote").hidden = !fresh;

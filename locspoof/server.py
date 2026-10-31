@@ -30,6 +30,7 @@ from .recents import RecentsStore
 from .routes import RoutesStore
 from .routing import Router
 from .schedule import SchedulesStore, Scheduler, clean_plan
+from . import battery as battery_mod
 from . import signals as signals_mod
 from .california import CA_BOX
 from .panic import PanicStore
@@ -511,6 +512,10 @@ def create_app(
         st["enabled"] = bool(settings.data["keep_awake"])
         st["last_sleep"] = watch.last_sleep
         return st
+
+    @app.get("/api/battery")
+    async def get_battery():
+        return await asyncio.to_thread(battery_mod.read)
 
     @app.get("/api/schedules")
     async def list_schedules():

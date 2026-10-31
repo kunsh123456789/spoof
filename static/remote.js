@@ -84,14 +84,14 @@
   }
 
   // ---------- keeping an eye on the plan: health, alerts, plans, recent activity ----------
-  let plans = [], nextEv = null, awake = null, events = [], lastAlertSig = "";
+  let plans = [], nextEv = null, awake = null, events = [], lastAlertSig = "", batt = null;
   const clockText = (at) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const STEP_BADGE = { pending: "⏳ waiting", running: "▶ running", done: "✅ done", error: "⚠ failed", missed: "🕘 missed", skipped: "⏭ skipped" };
   const stepTitle = (s) => s.title || ({ trick_or_treat: "Trick or treat", move_to: "Walk / drive", route: "Saved route", set_location: "Set location", clear: "Restore real GPS", stop: "Stop moving" })[s.type] || s.type;
   async function monitor() {
     try {
-      const [sc, aw, ac] = await Promise.all([api("GET", "/api/schedules", undefined, { timeout: 8000 }), api("GET", "/api/awake", undefined, { timeout: 8000 }), api("GET", "/api/activity", undefined, { timeout: 8000 })]);
-      plans = sc.plans; nextEv = sc.next; awake = aw; events = ac.events.slice(-8).reverse(); renderMonitor();
+      const [sc, aw, ac, bt] = await Promise.all([api("GET", "/api/schedules", undefined, { timeout: 8000 }), api("GET", "/api/awake", undefined, { timeout: 8000 }), api("GET", "/api/activity", undefined, { timeout: 8000 }), api("GET", "/api/battery", undefined, { timeout: 8000 })]);
+      plans = sc.plans; nextEv = sc.next; awake = aw; batt = bt; events = ac.events.slice(-8).reverse(); renderMonitor();
     } catch (e) { if (!e.unauth) renderMonitor(e); }
     clearTimeout(monitor.t); monitor.t = setTimeout(monitor, 5000);
   }
@@ -104,6 +104,7 @@
     const armed = plans.filter((p) => p.armed);
     armed.forEach((p) => p.steps.forEach((st) => { if (st.status === "error") out.push(`Plan “${p.name}”: ${stepTitle(st)} failed. ${st.note || ""}`); else if (st.status === "missed") out.push(`Plan “${p.name}”: ${stepTitle(st)} was missed.`); }));
     if (armed.length && awake && awake.supported && !awake.enabled) out.push("“Keep the Mac awake” is off: the Mac may sleep and stop the plan.");
+    if (batt?.supported && batt.plugged === false && batt.percent <= 20) out.push(`The Mac's battery is at ${batt.percent}%${batt.minutes_left ? ` (about ${Math.round(batt.minutes_left / 60 * 10) / 10} h left)` : ""} and it is not plugged in. If it runs flat the Mac sleeps and the location stops.`);
     if (awake?.last_sleep && Date.now() / 1000 - awake.last_sleep.woke < 900) out.push(`The Mac was asleep for ${Math.round(awake.last_sleep.slept_s / 60)} min (until ${clockText(awake.last_sleep.woke * 1000)}).`);
     return out;
   }
@@ -115,6 +116,7 @@
       chip(offlineErr ? "bad" : "ok", offlineErr ? "🔗 Mac unreachable" : "🔗 Mac connected"),
       chip(phoneOk ? "ok" : "bad", phoneOk ? `📱 ${s.device?.name || "iPhone"}${s.device?.connection === "Wi-Fi" ? " (Wi-Fi)" : ""}` : "📱 iPhone not ready"),
       awake ? chip(awake.active ? "ok" : (awake.enabled ? "ok" : "warn"), awake.active ? "☕ Mac kept awake" : awake.enabled ? "☕ Keep-awake on" : "☕ Mac may sleep") : chip("warn", "☕ …"),
+      ...(batt?.supported ? [chip(batt.plugged ? "ok" : batt.percent <= 10 ? "bad" : batt.percent <= 20 ? "warn" : "ok", `${batt.plugged ? "🔌" : "🔋"} Mac ${batt.percent}%${batt.charging ? " charging" : batt.plugged ? " plugged in" : ""}`)] : []),
       chip(armed.length ? "ok" : "warn", armed.length ? `⏰ ${armed.length} plan${armed.length > 1 ? "s" : ""} on` : "⏰ no plan on"));
     $("alerts").hidden = !probs.length; $("alerts").replaceChildren(...probs.map((p) => Object.assign(document.createElement("div"), { textContent: "⚠ " + p })));
     const bar = $("alertbar"); bar.hidden = !probs.length || $("p-status").hidden === false; if (probs.length) bar.textContent = `⚠ ${probs[0]}${probs.length > 1 ? `  (+${probs.length - 1} more)` : ""}`;

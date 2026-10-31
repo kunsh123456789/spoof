@@ -238,3 +238,25 @@ def test_a_paired_phone_can_monitor_plans_and_adjust_them(mac):
     sid = plan["steps"][0]["id"]
     assert p.post(f"/api/schedules/{plan['id']}/steps/{sid}/run", headers=h).status_code == 200
     assert p.patch("/api/journey", json={"speed_kmh": 9}, headers=h).status_code in (200, 409)        # allowed (409 = not moving)
+
+
+# ---- the Mac's battery ----
+def test_pmset_output_is_parsed():
+    from locspoof.battery import parse_pmset, read
+    on_battery = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=4653155)\t87%; discharging; 5:12 remaining present: true"
+    assert parse_pmset(on_battery) == {"supported": True, "percent": 87, "plugged": False, "charging": False, "minutes_left": 312}
+    charging = "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t45%; charging; 1:30 remaining present: true"
+    c = parse_pmset(charging)
+    assert c["plugged"] is True and c["charging"] is True and c["percent"] == 45
+    full = "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged; 0:00 remaining present: true"
+    assert parse_pmset(full)["plugged"] is True and parse_pmset(full)["charging"] is False
+    assert parse_pmset("Now drawing from 'AC Power'\n")["supported"] is False and parse_pmset("")["supported"] is False
+    assert read(runner=lambda: on_battery)["percent"] == 87 and read(runner=lambda: "")["supported"] is False
+
+
+def test_a_paired_phone_can_read_the_battery(mac):
+    p = phone(mac)
+    h = pair(mac, p)
+    r = p.get("/api/battery", headers=h)
+    assert r.status_code == 200 and "supported" in r.json()
+    assert phone(mac).get("/api/battery").status_code == 401

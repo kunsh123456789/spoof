@@ -76,6 +76,8 @@ The remote has three tabs, and the **🚨 panic button is always on screen**:
   alert shows on every tab), the **next scheduled step** with a countdown, each **plan** with every step's state (waiting / running / done / failed / missed), and the
   **recent activity** log. You can adjust things: a **speed slider** while moving, **Stop**, **Back to start**, **Real GPS**, switch a plan **on or off**, and press **⏵** to run a
   step right now.
+The health chips also show the **Mac's battery** (🔋 87%, or 🔌 plugged in), and a red alert appears when it is at 20% or less and not plugged in: a flat Mac sleeps and stops the location. (Macs only; the battery is also shown in the Mac app under Phones & connection → Keep Mac awake.)
+
 * **📍 Places**: search, tap the map, favorites, recents, **Set location here**.
 * **🚶 Trip**: walk, drive or straight line to the pin, and run saved routes.
 
