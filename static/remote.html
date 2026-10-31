@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="/static/icon.png">
   <link rel="icon" href="/static/icon.png">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/remote.css?v=2">
+  <link rel="stylesheet" href="/static/remote.css?v=3">
 </head>
 <body>
   <!-- first time: pair with the Mac -->
@@ -41,10 +41,24 @@
 
     <section id="sheet">
       <nav id="rtabs" role="tablist">
-        <button data-p="places" class="on">📍 Places</button><button data-p="trip">🚶 Trip</button>
+        <button data-p="status" class="on">✅ Status</button><button data-p="places">📍 Places</button><button data-p="trip">🚶 Trip</button>
       </nav>
 
-      <div class="pane" id="p-places">
+      <div class="pane" id="p-status">
+        <div id="health" class="health"></div>
+        <div id="alerts" class="alerts" hidden></div>
+        <label id="liveWrap" class="slider" hidden>Speed now <b><output id="liveSpeedOut">5</output> km/h</b><input id="liveSpeed" type="range" min="1" max="120" value="5"></label>
+        <div class="row3">
+          <button id="stopBtn" class="sec">⏹ Stop</button>
+          <button id="returnBtn" class="sec">↩ Back to start</button>
+          <button id="restoreBtn" class="danger">Real GPS</button>
+        </div>
+        <h3>Next up</h3><p id="nextUp" class="hint">Nothing scheduled.</p>
+        <h3>Plans</h3><div id="plans"></div>
+        <h3>Recent</h3><ul id="activity" class="list small"></ul>
+      </div>
+
+      <div class="pane" id="p-places" hidden>
         <form id="searchForm"><input id="q" type="search" placeholder="Search a place or address" autocomplete="off" aria-label="Search"><button class="sec">Search</button></form>
         <ul id="results" class="list" hidden></ul>
         <p id="pinInfo" class="hint">Tap the map to drop a pin.</p>
@@ -57,18 +71,14 @@
         <div class="seg" id="modeSeg"><button data-m="walk" class="on">🚶 Walk</button><button data-m="drive">🚗 Drive</button><button data-m="straight">➡️ Straight</button></div>
         <label class="slider">Speed <b><output id="tripSpeedOut">5</output> km/h</b><input id="tripSpeed" type="range" min="1" max="120" value="5"></label>
         <button id="goBtn" class="big">▶ Go to the pin</button>
-        <div class="row3">
-          <button id="stopBtn" class="sec">⏹ Stop</button>
-          <button id="returnBtn" class="sec">↩ Back to start</button>
-          <button id="restoreBtn" class="danger">Real GPS</button>
-        </div>
         <h3>Saved routes</h3><ul id="routes" class="list"></ul>
       </div>
     </section>
+    <button id="alertbar" hidden></button>
     <div id="rtoast" hidden></div>
   </div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/remote.js?v=2"></script>
+  <script src="/static/remote.js?v=4"></script>
 </body>
 </html>

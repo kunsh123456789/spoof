@@ -45,6 +45,9 @@ ALLOWED = [(m, re.compile(p)) for m, p in [
     ("GET", r"^/api/search$"), ("GET", r"^/api/reverse$"), ("GET", r"^/api/snap$"),
     ("GET", r"^/api/favorites$"), ("GET", r"^/api/recent$"), ("GET", r"^/api/routes$"), ("POST", r"^/api/routes/[A-Za-z0-9_-]+/start$"),
     ("GET", r"^/api/panic$"), ("POST", r"^/api/panic/go$"), ("GET", r"^/api/devices$"),
+    # monitoring and light adjustments: read the plans / health / log, switch a plan on or off, run one step now
+    ("GET", r"^/api/schedules$"), ("POST", r"^/api/schedules/[A-Za-z0-9_-]+/arm$"), ("POST", r"^/api/schedules/[A-Za-z0-9_-]+/steps/[A-Za-z0-9_-]+/run$"),
+    ("GET", r"^/api/awake$"), ("GET", r"^/api/activity$"),
     ("GET", r"^/api/remote/me$"),
 ]]
 TILES = re.compile(r"^/tiles/\d+/\d+/\d+\.png$")

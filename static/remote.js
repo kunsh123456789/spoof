@@ -79,9 +79,72 @@
   let pollTimer = null;
   async function poll() {
     clearTimeout(pollTimer);
-    try { render(await api("GET", "/api/status", undefined, { timeout: 8000 })); } catch (e) { if (e.unauth) return; $("rtitle").textContent = "Can't reach the Mac"; $("rsub").textContent = e.hint || ""; $("rdot").className = "dot bad"; }
+    try { render(await api("GET", "/api/status", undefined, { timeout: 8000 })); renderMonitor(); } catch (e) { if (e.unauth) return; renderMonitor(e); $("rtitle").textContent = "Can't reach the Mac"; $("rsub").textContent = e.hint || ""; $("rdot").className = "dot bad"; }
     pollTimer = setTimeout(poll, status?.walk?.active ? 1000 : 2500);
   }
+
+  // ---------- keeping an eye on the plan: health, alerts, plans, recent activity ----------
+  let plans = [], nextEv = null, awake = null, events = [], lastAlertSig = "";
+  const clockText = (at) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const STEP_BADGE = { pending: "⏳ waiting", running: "▶ running", done: "✅ done", error: "⚠ failed", missed: "🕘 missed", skipped: "⏭ skipped" };
+  const stepTitle = (s) => s.title || ({ trick_or_treat: "Trick or treat", move_to: "Walk / drive", route: "Saved route", set_location: "Set location", clear: "Restore real GPS", stop: "Stop moving" })[s.type] || s.type;
+  async function monitor() {
+    try {
+      const [sc, aw, ac] = await Promise.all([api("GET", "/api/schedules", undefined, { timeout: 8000 }), api("GET", "/api/awake", undefined, { timeout: 8000 }), api("GET", "/api/activity", undefined, { timeout: 8000 })]);
+      plans = sc.plans; nextEv = sc.next; awake = aw; events = ac.events.slice(-8).reverse(); renderMonitor();
+    } catch (e) { if (!e.unauth) renderMonitor(e); }
+    clearTimeout(monitor.t); monitor.t = setTimeout(monitor, 5000);
+  }
+  function problems(offlineErr) {
+    const out = [], s = status || {}, w = s.walk || {}, sim = s.simulation || {};
+    if (offlineErr) out.push("Can't reach the Mac. Is it awake with the app open, and is this phone on its Wi-Fi (or Tailscale)?");
+    if (s.state && s.state !== "ready" && !sim.active) out.push(`iPhone: ${s.error?.message || "not connected"}${s.error?.hint ? " " + s.error.hint : ""}`);
+    if (sim.reconnecting || w.state === "reconnecting") out.push("The iPhone dropped off. The app is reconnecting…");
+    if (w.error) out.push(`The trip stopped: ${w.error.message}`);
+    const armed = plans.filter((p) => p.armed);
+    armed.forEach((p) => p.steps.forEach((st) => { if (st.status === "error") out.push(`Plan “${p.name}”: ${stepTitle(st)} failed. ${st.note || ""}`); else if (st.status === "missed") out.push(`Plan “${p.name}”: ${stepTitle(st)} was missed.`); }));
+    if (armed.length && awake && awake.supported && !awake.enabled) out.push("“Keep the Mac awake” is off: the Mac may sleep and stop the plan.");
+    if (awake?.last_sleep && Date.now() / 1000 - awake.last_sleep.woke < 900) out.push(`The Mac was asleep for ${Math.round(awake.last_sleep.slept_s / 60)} min (until ${clockText(awake.last_sleep.woke * 1000)}).`);
+    return out;
+  }
+  function chip(cls, text) { const c = document.createElement("span"); c.className = `chip ${cls}`; c.textContent = text; return c; }
+  function renderMonitor(offlineErr) {
+    const s = status || {}, probs = problems(offlineErr), armed = plans.filter((p) => p.armed);
+    const phoneOk = s.state === "ready";
+    $("health").replaceChildren(
+      chip(offlineErr ? "bad" : "ok", offlineErr ? "🔗 Mac unreachable" : "🔗 Mac connected"),
+      chip(phoneOk ? "ok" : "bad", phoneOk ? `📱 ${s.device?.name || "iPhone"}${s.device?.connection === "Wi-Fi" ? " (Wi-Fi)" : ""}` : "📱 iPhone not ready"),
+      awake ? chip(awake.active ? "ok" : (awake.enabled ? "ok" : "warn"), awake.active ? "☕ Mac kept awake" : awake.enabled ? "☕ Keep-awake on" : "☕ Mac may sleep") : chip("warn", "☕ …"),
+      chip(armed.length ? "ok" : "warn", armed.length ? `⏰ ${armed.length} plan${armed.length > 1 ? "s" : ""} on` : "⏰ no plan on"));
+    $("alerts").hidden = !probs.length; $("alerts").replaceChildren(...probs.map((p) => Object.assign(document.createElement("div"), { textContent: "⚠ " + p })));
+    const bar = $("alertbar"); bar.hidden = !probs.length || $("p-status").hidden === false; if (probs.length) bar.textContent = `⚠ ${probs[0]}${probs.length > 1 ? `  (+${probs.length - 1} more)` : ""}`;
+    const sig = probs.join("|"); if (sig && sig !== lastAlertSig) navigator.vibrate?.([120, 60, 120]); lastAlertSig = sig;
+    $("nextUp").textContent = nextEv ? `⏰ ${clockText(nextEv.at)} (${inText(Math.max(0, nextEv.in_s))}) — ${nextEv.title || nextEv.type.replace("_", " ")} · ${nextEv.plan_name}` : (armed.length ? "Active plans have nothing left to run." : "No plan is switched on.");
+    $("plans").replaceChildren(...(plans.length ? plans.map((p) => {
+      const card = document.createElement("div"); card.className = "plan";
+      const head = document.createElement("div"); head.className = "ph"; const nm = document.createElement("b"); nm.textContent = p.name;
+      const sw = document.createElement("label"); sw.className = "sw"; const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!p.armed; sw.append(cb, document.createElement("i"));
+      cb.onchange = () => act(null, async () => { try { await api("POST", `/api/schedules/${p.id}/arm`, { armed: cb.checked }); toast(cb.checked ? "Plan switched on." : "Plan switched off."); } catch (e) { cb.checked = !cb.checked; throw e; } monitor(); });
+      head.append(nm, sw); card.append(head);
+      p.steps.forEach((st) => {
+        const row = document.createElement("div"); row.className = "step";
+        const when = document.createElement("span"); when.className = "when"; when.textContent = st.after_s != null ? `+${st.after_s >= 60 ? Math.round(st.after_s / 60) + "m" : st.after_s + "s"}` : clockText(st.at);
+        const what = document.createElement("span"); what.className = "what"; what.textContent = stepTitle(st); if (st.note) { const n = document.createElement("small"); n.textContent = st.note; what.append(n); }
+        const b = document.createElement("span"); b.className = `badge ${st.status}`; b.textContent = STEP_BADGE[st.status] || st.status; row.append(when, what, b);
+        if (st.status === "pending" || st.status === "error" || st.status === "missed") { const go = document.createElement("button"); go.className = "sec go"; go.textContent = "⏵"; go.setAttribute("aria-label", "Run this step now");
+          go.onclick = () => { if (!confirm(`Run “${stepTitle(st)}” right now?`)) return; act(go, async () => { const r = await api("POST", `/api/schedules/${p.id}/steps/${st.id}/run`); toast(r.note || "Done."); monitor(); }); }; row.append(go); }
+        card.append(row);
+      });
+      return card;
+    }) : [Object.assign(document.createElement("p"), { className: "hint", textContent: "No plans yet. Create them in the app on the Mac (Schedule tab)." })]));
+    $("activity").replaceChildren(...(events.length ? events.map((e) => { const el = document.createElement("li"); el.className = e.level; const t = document.createElement("span"); t.className = "t"; t.textContent = new Date(e.ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const x = document.createElement("span"); x.className = "name"; x.style.whiteSpace = "normal"; x.textContent = e.text; el.append(t, x); return el; }) : [Object.assign(document.createElement("li"), { className: "empty", textContent: "Nothing yet." })]));
+    const w = s.walk || {};
+    $("liveWrap").hidden = !w.active; if (w.active && document.activeElement !== $("liveSpeed")) { $("liveSpeed").value = Math.round(w.speed_kmh || 5); $("liveSpeedOut").textContent = $("liveSpeed").value; }
+  }
+  $("liveSpeed").oninput = () => ($("liveSpeedOut").textContent = $("liveSpeed").value);
+  $("liveSpeed").onchange = () => act(null, async () => { await api("PATCH", "/api/journey", { speed_kmh: Number($("liveSpeed").value) }); toast(`Speed changed to ${$("liveSpeed").value} km/h.`); });
+  $("alertbar").onclick = () => $("rtabs").querySelector('[data-p="status"]').click();
 
   // ---------- buttons ----------
   $("stopBtn").onclick = (e) => act(e.currentTarget, async () => { await api("DELETE", "/api/journey"); toast("Stopped. The iPhone stays where it is."); });
@@ -100,7 +163,7 @@
   });
   document.querySelectorAll("#modeSeg button").forEach((b) => (b.onclick = () => { mode = b.dataset.m; document.querySelectorAll("#modeSeg button").forEach((x) => x.classList.toggle("on", x === b)); }));
   $("tripSpeed").oninput = () => ($("tripSpeedOut").textContent = $("tripSpeed").value);
-  document.querySelectorAll("#rtabs button").forEach((b) => (b.onclick = () => { document.querySelectorAll("#rtabs button").forEach((x) => x.classList.toggle("on", x === b)); document.querySelectorAll(".pane").forEach((p) => (p.hidden = p.id !== `p-${b.dataset.p}`)); }));
+  document.querySelectorAll("#rtabs button").forEach((b) => (b.onclick = () => { document.querySelectorAll("#rtabs button").forEach((x) => x.classList.toggle("on", x === b)); document.querySelectorAll(".pane").forEach((p) => (p.hidden = p.id !== `p-${b.dataset.p}`)); renderMonitor(); }));
 
   // ---------- places ----------
   const li = (text, onClick, ...btns) => { const el = document.createElement("li"); const s = document.createElement("span"); s.className = "name"; s.textContent = text; el.append(s, ...btns); if (onClick) el.onclick = onClick; return el; };
@@ -134,7 +197,7 @@
   async function start() {
     $("pair").hidden = true; $("app").hidden = false; initMap();
     try { await api("GET", "/api/remote/me"); } catch (e) { if (e.unauth) return; }
-    loadPhones(); loadLists(); poll(); setTimeout(() => map.invalidateSize(), 200);
+    loadPhones(); loadLists(); poll(); monitor(); setTimeout(() => map.invalidateSize(), 200);
   }
   window.addEventListener("resize", () => map && map.invalidateSize());
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && token) poll(); });

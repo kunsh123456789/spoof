@@ -69,7 +69,17 @@ It talks to the app on the Mac over your **home Wi-Fi** (both devices on the sam
 3. On the Mac press **New pairing code**, and type the 6 digits on the iPhone. This is done once per phone.
 4. In Safari: **Share → Add to Home Screen**. You now have an app icon that opens the remote full-screen.
 
-The remote has two tabs: **Places** (search, tap the map, favorites, recents, **Set location here**) and **Trip** (walk, drive or straight line to the pin; run saved routes; Stop / Back to start / Real GPS).
+The remote has three tabs, and the **🚨 panic button is always on screen**:
+
+* **✅ Status** (opens first; it is for checking that the plan is working): health chips (Mac reachable, iPhone ready, Mac kept awake, plans on), red **alerts** when
+  something is wrong (iPhone dropped, trip stopped, a plan step failed or was missed, keep-awake off while a plan is on, the Mac slept; the phone also vibrates and the
+  alert shows on every tab), the **next scheduled step** with a countdown, each **plan** with every step's state (waiting / running / done / failed / missed), and the
+  **recent activity** log. You can adjust things: a **speed slider** while moving, **Stop**, **Back to start**, **Real GPS**, switch a plan **on or off**, and press **⏵** to run a
+  step right now.
+* **📍 Places**: search, tap the map, favorites, recents, **Set location here**.
+* **🚶 Trip**: walk, drive or straight line to the pin, and run saved routes.
+
+Plans themselves are created and edited on the Mac (Schedule tab); the remote can only watch, switch them on/off and run a step.
 If several iPhones are connected there is a phone picker at the top. The top bar always shows what the iPhone is doing and how far along a trip is.
 
 ### Using it away from home (other Wi-Fi, mobile data)

@@ -127,7 +127,7 @@ def test_a_paired_phone_can_control_but_not_administer(mac):
         assert p.request(method, path, json=body, headers=h).status_code == 200, (method, path)
     # everything else is Mac-only
     for method, path in [("GET", "/api/settings"), ("PATCH", "/api/settings"), ("GET", "/api/remote"), ("POST", "/api/remote/code"),
-                         ("DELETE", "/api/remote/devices/abc"), ("GET", "/api/activity"), ("DELETE", "/api/activity"), ("GET", "/api/schedules"),
+                         ("DELETE", "/api/remote/devices/abc"), ("DELETE", "/api/activity"), ("POST", "/api/schedules"), ("PUT", "/api/schedules/x"), ("DELETE", "/api/schedules/x"), ("POST", "/api/schedules/x/reset"),
                          ("POST", "/api/offline"), ("PUT", "/api/panic"), ("POST", "/api/devices/scan"), ("DELETE", "/api/favorites/x"), ("POST", "/api/wifi")]:
         r = p.request(method, path, json={}, headers=h)
         assert r.status_code == 403 and r.json()["error"]["code"] == "forbidden", (method, path, r.status_code)
@@ -225,3 +225,16 @@ def test_a_phone_that_went_quiet_is_not_online(tmp_path):
     assert s.listing()[0]["online"] is True
     clock["t"] += 30
     assert s.listing()[0]["online"] is False and s.listing()[0]["last_seen"] == 100.0
+
+
+def test_a_paired_phone_can_monitor_plans_and_adjust_them(mac):
+    p = phone(mac)
+    h = pair(mac, p)
+    for path in ("/api/schedules", "/api/awake", "/api/activity"):
+        assert p.get(path, headers=h).status_code == 200, path
+    plan = mac.post("/api/schedules", json={"name": "Night", "steps": [{"at": "2099-01-01T20:00", "type": "clear", "params": {}}]}).json()
+    assert p.post(f"/api/schedules/{plan['id']}/arm", json={"armed": True}, headers=h).status_code == 200
+    assert p.get("/api/schedules", headers=h).json()["plans"][0]["armed"] is True
+    sid = plan["steps"][0]["id"]
+    assert p.post(f"/api/schedules/{plan['id']}/steps/{sid}/run", headers=h).status_code == 200
+    assert p.patch("/api/journey", json={"speed_kmh": 9}, headers=h).status_code in (200, 409)        # allowed (409 = not moving)
