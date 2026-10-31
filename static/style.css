@@ -128,3 +128,11 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 5px; font-size: 1
   #totBanner { top: 8px; font-size: 13px; }
 }
 .infocard + .row { margin-top: 8px; }
+
+/* tabs: 5 across, allow the long label to wrap */
+#tabs button { padding-left: 0; padding-right: 0; }
+#tabs button span { text-align: center; line-height: 1.15; }
+.netnote { margin: 0 16px 8px; padding: 6px 10px; border-radius: 8px; font-size: 13px; background: color-mix(in srgb, var(--warn) 16%, transparent); border: 1px solid var(--warn); }
+.bar { height: 8px; border-radius: 99px; background: var(--border); overflow: hidden; margin-bottom: 6px; }
+#offBar { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.pack-rect { cursor: pointer; }

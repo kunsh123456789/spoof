@@ -519,9 +519,10 @@ class DeviceManager:
 
         first_dwell, first_target = 0.0, 0
         if plan.jump_to_first:
-            await self.set_location(stops[0].lat, stops[0].lon)
             first_dwell, first_target = stops[0].dwell_s, 1
-        origin = self._position
+            origin = (stops[0].lat, stops[0].lon)
+        else:
+            origin = self._position
         assert origin is not None
         targets = stops[first_target:]
 
@@ -538,6 +539,9 @@ class DeviceManager:
                 [(t.lat, t.lon) for t in ring], list(range(len(stops))), [t.dwell_s for t in stops], plan.mode, router
             )
 
+        if plan.jump_to_first:
+            # Only teleport once every route is known to work, so a routing failure never strands the phone.
+            await self.set_location(*origin)
         self._route_points = [[lat, lon] for leg in legs for lat, lon in leg.points]
         self._walk = {
             "kind": plan.kind, "mode": plan.mode, "speed_kmh": speed, "loop": bool(cycle), "total": len(stops),

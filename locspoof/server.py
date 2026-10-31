@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -15,7 +15,10 @@ from .device import Backend, DeviceManager, JourneyPlan, PmdBackend, Stop
 from .errors import AppError
 from .favorites import FavoritesStore
 from .geocode import Geocoder
+import httpx
+
 from .movement import point_in_polygon, polygon_area_m2, polygon_centroid, validate_coords
+from .offline import OfflineDownloader, OfflineStore, fetch_tile
 from .recents import RecentsStore
 from .routing import Router
 from .trickortreat import HouseFinder
@@ -62,6 +65,21 @@ class FavoriteRequest(BaseModel):
 MAX_AREA_M2 = 4_000_000  # 4 km^2: keeps the free Overpass query small and the tour walkable
 
 
+class BBoxModel(BaseModel):
+    south: float
+    west: float
+    north: float
+    east: float
+
+    def tup(self):
+        return self.south, self.west, self.north, self.east
+
+
+class OfflineRequest(BaseModel):
+    name: str = ""
+    bbox: BBoxModel
+
+
 class TrickOrTreatRequest(BaseModel):
     lat: Optional[float] = None
     lon: Optional[float] = None
@@ -77,6 +95,9 @@ def create_app(
     router: Optional[Router] = None,
     house_finder: Optional[HouseFinder] = None,
     recents_path: Optional[Path] = None,
+    offline_root: Optional[Path] = None,
+    tile_client: Optional[httpx.AsyncClient] = None,
+    tile_delay: float = 0.3,
     tunnel_mode: str = "auto",
     walk_tick: float = 1.0,
 ) -> FastAPI:
@@ -87,8 +108,10 @@ def create_app(
         on_finish=lambda lat, lon: recents.add(lat, lon, "Route end"),
     )
     geo = geocoder or Geocoder()
-    road_router = router or Router()
-    houses = house_finder or HouseFinder()
+    offline = OfflineStore(offline_root or ROOT / "offline")
+    road_router = router or Router(offline=offline)
+    houses = house_finder or HouseFinder(offline=offline)
+    downloader = OfflineDownloader(offline, houses, client=tile_client, tile_delay=tile_delay)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -198,7 +221,42 @@ def create_app(
                 raise AppError("bad_radius", "Radius must be between 100 and 1500 m.", status=422)
             lat, lon = body.lat, body.lon
         plan = await houses.plan(lat, lon, body.radius_m, body.houses, polygon=polygon)
-        return {"houses": plan}
+        return {"houses": plan, "source": getattr(houses, "last_source", "online")}
+
+    # ---- offline packs ----
+    @app.get("/api/offline")
+    async def offline_list():
+        return {"packs": offline.list_packs(), "job": downloader.job}
+
+    @app.post("/api/offline/estimate")
+    async def offline_estimate(body: OfflineRequest):
+        return downloader.estimate(body.bbox.tup())
+
+    @app.post("/api/offline")
+    async def offline_start(body: OfflineRequest):
+        return {"job": await downloader.start(body.name, body.bbox.tup())}
+
+    @app.delete("/api/offline/{pack_id}")
+    async def offline_delete(pack_id: str):
+        if not offline.delete(pack_id):
+            raise AppError("not_found", "Offline area not found.", status=404)
+        return {"ok": True}
+
+    @app.get("/tiles/{z}/{x}/{y}.png")
+    async def tile(z: int, x: int, y: int):
+        """Map tiles: the saved copy if there is one, otherwise fetched live from OpenStreetMap."""
+        if not (0 <= z <= 19 and 0 <= x < 2 ** z and 0 <= y < 2 ** z):
+            return Response(status_code=404)
+        path = offline.tile_path(z, x, y)
+        if path.exists():
+            return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+        try:
+            resp = await fetch_tile(tile_client, z, x, y)
+        except httpx.HTTPError:
+            return Response(status_code=404)
+        if resp.status_code != 200:
+            return Response(status_code=404)
+        return Response(resp.content, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
 
     @app.get("/api/recent")
     async def list_recent():

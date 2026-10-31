@@ -82,8 +82,10 @@ def build_plan(
 
 
 class HouseFinder:
-    def __init__(self, client: Optional[httpx.AsyncClient] = None, min_interval: float = 2.0):
+    def __init__(self, client: Optional[httpx.AsyncClient] = None, min_interval: float = 2.0, offline=None):
         self._client = client
+        self.offline = offline            # OfflineStore (fallback when Overpass is unreachable)
+        self.last_source = "online"
         self._min_interval = min_interval
         self._lock = asyncio.Lock()
         self._last = 0.0
@@ -92,7 +94,15 @@ class HouseFinder:
         self, lat: float, lon: float, radius_m: int, count: int, rng: Optional[random.Random] = None,
         polygon: Optional[Polygon] = None,
     ) -> list[dict]:
-        points = await self._fetch(lat, lon, radius_m, polygon)
+        try:
+            points = await self._fetch(lat, lon, radius_m, polygon)
+            self.last_source = "online"
+        except AppError as e:
+            saved = self.offline.houses_near(lat, lon, radius_m, polygon) if (self.offline and e.code == "houses_unavailable") else []
+            if not saved:
+                raise
+            log.info("Overpass unreachable; using %d houses from offline data", len(saved))
+            points, self.last_source = saved, "offline"
         if polygon:  # Overpass may return buildings that merely touch the shape; keep only those inside it
             points = [p for p in points if point_in_polygon(p[0], p[1], polygon)]
         plan = build_plan(points, (lat, lon), count, rng)
@@ -108,7 +118,10 @@ class HouseFinder:
         return plan
 
     async def _fetch(self, lat: float, lon: float, radius_m: int, polygon: Optional[Polygon] = None) -> list[Point]:
-        query = build_query(lat, lon, radius_m, polygon)
+        return parse_points(await self.query_json(build_query(lat, lon, radius_m, polygon)))
+
+    async def query_json(self, query: str) -> dict:
+        """Run an Overpass query (trying the mirror too) and return the parsed JSON."""
         last_err = "no response"
         async with self._lock:
             for url in OVERPASS_URLS:
@@ -124,7 +137,7 @@ class HouseFinder:
                     self._last = time.monotonic()
                 if resp.status_code == 200:
                     try:
-                        return parse_points(resp.json())
+                        return resp.json()
                     except ValueError:
                         last_err = "invalid JSON"
                         continue

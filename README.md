@@ -13,7 +13,7 @@ Everything runs on localhost — no accounts, no cloud services, no API keys.
 device status (name, iOS version, clear errors) · click-to-pin map + manual lat/lon · place search ·
 Set / Clear location · **road routes** (walking or driving paths, or a straight line) with adjustable speed ·
 **multi-stop routes** (pauses, looping) · **trick-or-treat mode** (orange theme) · saved favorites ·
-recent locations · dark mode · phone-friendly layout.
+recent locations · **offline areas** (map, houses and streets saved for use without internet) · dark mode · phone-friendly layout.
 
 ## Quick start
 
@@ -108,11 +108,22 @@ The bar at the bottom always shows what the phone is doing, with **Stop moving**
 * **★ Saved**: **Favorites** take a name plus a place name, coordinates like `48.8584, 2.2945`, or nothing (saves the
   current pin). Click one to move the pin there, **＋** adds it as a stop. **Recent** keeps your last 15 locations (each Set
   location and finished route); **★** promotes one to a favorite.
-* Files `favorites.json` and `recent.json` live next to `app.py` and are ignored by git.
+* **⬇️ Offline**: while you have internet, zoom the map so a neighborhood fills the screen (up to about 2.4 × 2.4 km), name it
+  and press **Download what I see**. The app saves, into the `offline/` folder next to `app.py`:
+  * the **map tiles** (zoom 12-17),
+  * the **houses** (for trick-or-treat "Find houses"), and
+  * the **streets** (for walking/driving paths, using a small built-in router).
+  Dashed boxes on the map show saved areas; click one in the list to jump there, ✕ deletes it. The app always tries the online
+  services first and uses the saved data automatically when they are unreachable, so inside a saved area everything works with
+  no data at all (a "No internet" note appears at the top). Typical size is 3-6 MB per area. To use trick-or-treat offline,
+  download the area first, then draw/pin inside it. Offline routing is a simplified router: a short gap in the street data
+  (up to 200 m) becomes a straight hop, anything longer reports an error. Straight line mode never needs any data.
+* Files `favorites.json`, `recent.json` and the `offline/` folder live next to `app.py` and are ignored by git.
 
 Notes on the online services: place search (Nominatim), road routing (the free OSM-community OSRM servers at
 routing.openstreetmap.de) and house lookup (Overpass API) are free public services with fair-use limits. The app sends a
-User-Agent, rate-limits and caches requests; if one is down you get a friendly message, and **Straight line** always works
+User-Agent, rate-limits and caches requests (map tiles are fetched by the local server with an identifying User-Agent; saved areas are
+kept small on purpose, because OpenStreetMap asks people not to bulk-download tiles); if one is down you get a friendly message, and **Straight line** always works
 offline. Large location jumps followed by fast movement are how some apps detect fake GPS, so keep that in mind.
 
 Command-line options: `python app.py --port 8000 --tunnel auto -v` (`-v` = debug logging). The server binds to
@@ -134,7 +145,9 @@ Command-line options: `python app.py --port 8000 --tunnel auto -v` (`-v` = debug
 | "Could not look up houses" / "Found only N houses" | The Overpass service is busy (wait a minute), or draw a bigger area over a residential neighborhood (OpenStreetMap needs houses mapped there). |
 | "That area is too big" | Draw a smaller area (max 4 km²). |
 | Search says "rate-limiting" or "offline" | Nominatim allows ~1 request/second and needs internet. Wait a moment. |
-| Map is grey | OpenStreetMap tiles need internet. |
+| Map is grey | OpenStreetMap tiles need internet, or a saved offline area covering this spot (Offline tab). Zooming past level 17 offline shows blank tiles. |
+| "That area is too big" (Offline tab) | Zoom the map in until the neighborhood fills the screen (limit about 6 km²). |
+| Offline route says "no offline map covers these points" | Download an offline area that includes both the start and the destination. |
 | Something else | Run `python app.py -v` and read the terminal; every failure logs a full traceback there. |
 
 pymobiledevice3 changes quickly. This project was written against version 11.x (fully async API). If a future
@@ -158,6 +171,7 @@ locspoof/device.py     phone detection, iOS-version-specific sessions, journey r
 locspoof/routing.py    road routing (OSRM) with per-leg geometry
 locspoof/trickortreat.py house lookup (Overpass) and tour planning
 locspoof/recents.py    recent locations store
+locspoof/offline.py    offline packs: tiles + houses + streets, local A* router, downloader
 locspoof/geocode.py    Nominatim client (User-Agent, rate limit, cache)
 locspoof/favorites.py  JSON favorites store
 locspoof/movement.py   great-circle math

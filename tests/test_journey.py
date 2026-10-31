@@ -203,3 +203,22 @@ def test_plan_area_validation(env, body, code):
     c, *_ = env
     r = c.post("/api/trick-or-treat/plan", json={"houses": 5, **body})
     assert r.status_code == 422 and r.json()["error"]["code"] == code
+
+
+def test_failed_routing_does_not_teleport_the_phone(tmp_path):
+    from locspoof.errors import AppError
+
+    class BrokenRouter:
+        async def route(self, waypoints, mode):
+            raise AppError("route_failed", "no roads", status=502)
+
+    backend = FakeBackend()
+    app = create_app(backend=backend, router=BrokenRouter(), house_finder=FakeHouses(), favorites_path=tmp_path / "f.json",
+                     recents_path=tmp_path / "r.json", offline_root=tmp_path / "o", walk_tick=0.01)
+    with TestClient(app) as c:
+        body = {"stops": [stop(10, 10, 0.05), stop(10, 10.001)], "mode": "walk", "speed_kmh": 5, "jump_to_first": True}
+        r = c.post("/api/journey", json=body)
+        assert r.status_code == 502 and r.json()["error"]["code"] == "route_failed"
+        st = c.get("/api/status").json()
+        assert st["simulation"] == {"active": False} and st["walk"]["active"] is False
+    assert not any(x[0] == "set" for s in backend.sessions for x in s.calls)

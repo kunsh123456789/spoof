@@ -7,7 +7,8 @@
   };
   const map = L.map("map", { zoomControl: false }).setView([20, 0], 2);
   L.control.zoom({ position: "topright" }).addTo(map);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  // Tiles come through the local server: saved offline copies first, OpenStreetMap live otherwise.
+  L.tileLayer("/tiles/{z}/{x}/{y}.png", {
     maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 
@@ -57,6 +58,7 @@
     document.querySelectorAll(".tabpanel").forEach((p) => (p.hidden = p.id !== `tab-${name}`));
     if (name === "tot") { stopLayer.remove(); areaLayer.addTo(map); } else { stopLayer.addTo(map); areaLayer.remove(); if (drawing) cancelDraw(); }
     store.set("tab", name); updateTheme();
+    if (name === "offline") { loadOffline(); scheduleEstimate(); }
   }
   document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
   function updateTheme() {
@@ -249,14 +251,15 @@
     else Object.assign(body, readInputs());                  // no area: needs the pin
     clearHouses();
     $("totInfo").hidden = false; $("totInfo").textContent = "Looking for houses on OpenStreetMap…";
-    try { houses = (await api("POST", "/api/trick-or-treat/plan", body)).houses; }
+    let source = "online";
+    try { const res = await api("POST", "/api/trick-or-treat/plan", body); houses = res.houses; source = res.source; }
     catch (e) { $("totInfo").hidden = true; throw e; }
     houses.forEach((h, i) => L.marker([h.lat, h.lon], { icon: L.divIcon({ className: "", html: `<div class="pumpkin">🎃</div>`, iconSize: [22, 22] }), title: `House ${i + 1}`, interactive: false }).addTo(houseLayer));
     L.polyline(houses.map((h) => [h.lat, h.lon]), { color: "#ff7a00", weight: 2, dashArray: "3 6", interactive: false }).addTo(houseLayer);
     map.fitBounds(L.latLngBounds(houses.map((h) => [h.lat, h.lon])).pad(0.25), { maxZoom: 18 });
     let dist = 0; for (let i = 1; i < houses.length; i++) dist += haversine([houses[i - 1].lat, houses[i - 1].lon], [houses[i].lat, houses[i].lon]);
     const secs = dist / (TOT_SPEED / 3.6) * 1.3 + houses.reduce((a, h) => a + h.dwell_s, 0);
-    $("totInfo").textContent = `🎃 ${houses.length} houses · about ${fmtDist(dist)} of walking · roughly ${Math.round(secs / 60)} min. Press “3 · Start” when ready.`;
+    $("totInfo").textContent = `🎃 ${houses.length} houses · about ${fmtDist(dist)} of walking · roughly ${Math.round(secs / 60)} min. Press “3 · Start” when ready.${source === "offline" ? " 📡 (Using saved offline houses.)" : ""}`;
     $("totStartBtn").disabled = false;
   });
   $("totStartBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
@@ -266,6 +269,64 @@
       jump_to_first: true, kind: "trick_or_treat", speed_jitter: 0.2,
     }, "Happy Halloween! 🎃 Heading to the first house…");
   });
+
+  // ---------- offline areas ----------
+  const packLayer = L.layerGroup().addTo(map);
+  let offTimer = null, offPoll = null, offBusy = false;
+  const mb = (b) => (b / 1048576).toFixed(1);
+  function viewBBox() { const b = map.getBounds(); return { south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() }; }
+  function scheduleEstimate() { clearTimeout(offTimer); offTimer = setTimeout(updateEstimate, 400); }
+  async function updateEstimate() {
+    if (tab !== "offline" || offPoll) return;
+    try {
+      const e = await api("POST", "/api/offline/estimate", { name: "x", bbox: viewBBox() });
+      $("offEstimate").textContent = `📐 ${e.area_km2} km² on screen · ${e.tiles} map tiles · about ${e.est_mb} MB`; $("offBtn").disabled = false;
+    } catch (e) { $("offEstimate").textContent = `⚠️ ${e.message} ${e.hint || ""}`; $("offBtn").disabled = true; }
+  }
+  map.on("moveend", () => { if (tab === "offline") scheduleEstimate(); });
+  async function loadOffline() {
+    try {
+      const { packs, job } = await api("GET", "/api/offline");
+      packLayer.clearLayers();
+      packs.forEach((p) => {
+        const [s, w, n, e] = p.bbox;
+        L.rectangle([[s, w], [n, e]], { color: accent(), weight: 2, dashArray: "6 6", fill: false, className: "pack-rect" }).bindTooltip(`⬇ ${p.name}`, { sticky: true }).addTo(packLayer);
+      });
+      $("offList").replaceChildren(...(packs.length ? packs.map((p) => {
+        const el = li(`${p.name} · ${mb(p.bytes)} MB · ${p.houses} houses`);
+        el.title = "Click to show on the map"; el.onclick = () => map.fitBounds([[p.bbox[0], p.bbox[1]], [p.bbox[2], p.bbox[3]]]);
+        el.append(miniBtn("✕", `Delete ${p.name}`, async () => {
+          if (!confirm(`Delete the offline area “${p.name}”?`)) return;
+          try { await api("DELETE", `/api/offline/${p.id}`); loadOffline(); } catch (x) { fail(x); }
+        }));
+        return el;
+      }) : [li("No offline areas yet.")]));
+      showJob(job);
+    } catch (e) { fail(e); }
+  }
+  function showJob(job) {
+    const box = $("offProgress");
+    if (job.state === "running") {
+      box.hidden = false; $("offBtn").disabled = true;
+      $("offBar").style.width = job.stage === "map tiles" && job.total ? `${Math.round((job.done / job.total) * 100)}%` : "5%";
+      $("offStage").textContent = job.stage === "map tiles" ? `Downloading map tiles… ${job.done}/${job.total}` : `Downloading ${job.stage}…`;
+      if (!offPoll) offPoll = setInterval(loadOffline, 1000);
+      return;
+    }
+    if (offPoll) { clearInterval(offPoll); offPoll = null; }
+    if (job.state === "done" && offBusy) { offBusy = false; box.hidden = true; $("offBtn").disabled = false; toast(`“${job.name}” saved. It will work without internet.`, 6000); scheduleEstimate(); }
+    else if (job.state === "error" && offBusy) { offBusy = false; box.hidden = true; $("offBtn").disabled = false; fail(job.error); }
+    else if (!offBusy) box.hidden = true;
+  }
+  $("offBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
+    const name = $("offName").value.trim();
+    if (!name) throw { message: "Give this area a name.", hint: "For example “Maple Street”." };
+    await api("POST", "/api/offline", { name, bbox: viewBBox() });
+    offBusy = true; $("offName").value = ""; loadOffline();
+  });
+  window.addEventListener("online", () => ($("netNote").hidden = true));
+  window.addEventListener("offline", () => ($("netNote").hidden = false));
+  if (!navigator.onLine) $("netNote").hidden = false;
 
   // ---------- search ----------
   $("searchForm").addEventListener("submit", async (ev) => {
@@ -371,6 +432,6 @@
   }
   (function loop() { refresh().finally(() => setTimeout(loop, status?.walk?.active ? 1000 : 3000)); })();
 
-  showTab(["place", "move", "tot", "saved"].includes(store.get("tab")) ? store.get("tab") : "place");
+  showTab(["place", "move", "tot", "saved", "offline"].includes(store.get("tab")) ? store.get("tab") : "place");
   pinLine(); loadFavs(); loadRecent(); renderStops(); renderArea();
 })();

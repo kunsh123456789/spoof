@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>iPhone Location Simulator</title>
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=7">
+  <link rel="stylesheet" href="/static/style.css?v=8">
 </head>
 <body>
   <div id="map" aria-label="Map"></div>
@@ -24,11 +24,14 @@
       <button id="trustBtn" class="secondary" hidden>Trust this computer</button>
     </div>
 
+    <p id="netNote" class="netnote" hidden>📡 No internet connection — saved offline areas still work.</p>
+
     <nav id="tabs" role="tablist">
       <button role="tab" data-tab="place" class="active">📍<span>Place</span></button>
       <button role="tab" data-tab="move">🚶<span>Move</span></button>
       <button role="tab" data-tab="tot">🎃<span>Trick or treat</span></button>
       <button role="tab" data-tab="saved">★<span>Saved</span></button>
+      <button role="tab" data-tab="offline">⬇️<span>Offline</span></button>
     </nav>
 
     <div class="body">
@@ -162,6 +165,30 @@
         <h2>Recent <button id="clearRecent" class="linkbtn">clear</button></h2>
         <ul id="recent" class="list"></ul>
       </section>
+
+      <!-- ============ OFFLINE ============ -->
+      <section id="tab-offline" class="tabpanel" hidden>
+        <details class="howto" id="how-offline" open>
+          <summary>How it works</summary>
+          <ol>
+            <li>While you have internet, <b>zoom the map</b> so the neighborhood you'll use fills the screen.</li>
+            <li>Give it a name and press <b>Download what I see</b>. The app saves the <b>map</b>, the <b>houses</b> and the <b>streets</b> for that area on your Mac (a few MB).</li>
+            <li>Later with no data, everything works inside that area: the map still shows, <b>Find houses</b> uses the saved houses, and walking/driving paths follow the saved streets.</li>
+            <li>Dashed boxes on the map show which areas are saved.</li>
+          </ol>
+          <p class="muted">For trick-or-treat, make sure your whole neighborhood fits on screen (up to about 2.4 × 2.4 km). Map zoom levels 12–17 are saved; zooming in further offline shows blank tiles.</p>
+        </details>
+        <h2>Save this area</h2>
+        <input id="offName" placeholder="Name (e.g. Maple Street)" maxlength="60" aria-label="Offline area name">
+        <p id="offEstimate" class="pinline">Zoom the map onto your neighborhood…</p>
+        <button id="offBtn" class="primary full">⬇ Download what I see</button>
+        <div id="offProgress" class="infocard" hidden>
+          <div class="bar"><div id="offBar"></div></div>
+          <span id="offStage"></span>
+        </div>
+        <h2>Saved areas</h2>
+        <ul id="offList" class="list"></ul>
+      </section>
     </div>
 
     <footer id="now" data-state="idle">
@@ -179,6 +206,6 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>

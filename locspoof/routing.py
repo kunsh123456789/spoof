@@ -40,8 +40,9 @@ def _dedupe(points: list[LabelPoint]) -> list[LabelPoint]:
 
 
 class Router:
-    def __init__(self, client: Optional[httpx.AsyncClient] = None, min_interval: float = 1.1):
+    def __init__(self, client: Optional[httpx.AsyncClient] = None, min_interval: float = 1.1, offline=None):
         self._client = client
+        self.offline = offline            # OfflineStore (fallback when the routing service is unreachable)
         self._min_interval = min_interval
         self._lock = asyncio.Lock()
         self._last = 0.0
@@ -91,11 +92,16 @@ class Router:
                         422,
                     )
                 log.warning("routing attempt failed (%s %s): %s", server, profile, resp.status_code)
+        if data is None and self.offline:
+            legs = self.offline.route(waypoints, mode)
+            if legs:
+                log.info("routing service unreachable; used offline street data")
+                return legs
         if data is None:
             raise AppError(
                 "route_failed",
                 "Could not get a road route.",
-                "The routing service may be down or unreachable. Check your internet, or use Straight line.",
+                "The routing service may be down or unreachable, and no offline map covers these points. Check your internet, download this area in the Offline tab, or use Straight line.",
                 502,
             )
         legs = self._parse(data, waypoints)
@@ -108,9 +114,9 @@ class Router:
         headers = {"User-Agent": USER_AGENT}
         try:
             if self._client is not None:
-                return await self._client.get(url, params=params, headers=headers, timeout=20)
+                return await self._client.get(url, params=params, headers=headers, timeout=httpx.Timeout(20, connect=5))
             async with httpx.AsyncClient() as c:
-                return await c.get(url, params=params, headers=headers, timeout=20)
+                return await c.get(url, params=params, headers=headers, timeout=httpx.Timeout(20, connect=5))
         except httpx.HTTPError as e:
             log.error("routing request failed: %r", e)
             return None
