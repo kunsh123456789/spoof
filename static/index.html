@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>iPhone Location Simulator</title>
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="map" aria-label="Map"></div>
+
+  <aside id="panel">
+    <header>
+      <h1>iPhone Location</h1>
+      <div id="device" class="chip" data-state="loading"><span class="dot"></span><span id="deviceText">Checking…</span></div>
+    </header>
+
+    <div id="banner" class="banner" hidden>
+      <strong id="bannerMsg"></strong>
+      <p id="bannerHint"></p>
+      <button id="trustBtn" class="secondary" hidden>Trust this computer</button>
+    </div>
+
+    <form id="searchForm" role="search">
+      <input id="searchInput" type="search" placeholder="Search a place or address…" autocomplete="off" aria-label="Search places">
+      <button type="submit" class="secondary">Search</button>
+    </form>
+    <ul id="results" class="list" hidden></ul>
+
+    <section>
+      <h2>Coordinates</h2>
+      <div class="row">
+        <label>Lat <input id="lat" inputmode="decimal" placeholder="48.858370"></label>
+        <label>Lon <input id="lon" inputmode="decimal" placeholder="2.294481"></label>
+      </div>
+      <p class="muted" id="pinHint">Click the map to drop a pin.</p>
+      <div class="row">
+        <button id="setBtn" class="primary">Set Location</button>
+        <button id="clearBtn" class="danger">Clear / Restore Real</button>
+      </div>
+      <p id="simState" class="muted">Not simulating — phone uses its real GPS.</p>
+    </section>
+
+    <section>
+      <h2>Walk / drive here</h2>
+      <label class="speed">Speed <output id="speedOut">5</output> km/h
+        <input id="speed" type="range" min="1" max="120" step="1" value="5">
+      </label>
+      <div class="presets">
+        <button class="chipbtn" data-speed="5">Walk 5</button>
+        <button class="chipbtn" data-speed="15">Bike 15</button>
+        <button class="chipbtn" data-speed="50">Drive 50</button>
+      </div>
+      <div class="row">
+        <button id="walkBtn" class="secondary">Move to pin</button>
+        <button id="stopBtn" class="secondary">Stop here</button>
+      </div>
+      <p id="walkState" class="muted"></p>
+    </section>
+
+    <section>
+      <h2>Favorites</h2>
+      <form id="favForm" class="row">
+        <input id="favName" placeholder="Name for current pin" maxlength="80" aria-label="Favorite name">
+        <button type="submit" class="secondary">Save</button>
+      </form>
+      <ul id="favs" class="list"></ul>
+    </section>
+  </aside>
+
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="/static/vendor/leaflet/leaflet.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
