@@ -24,6 +24,9 @@ DEFAULTS: dict[str, bool] = {
     "tot_avoid_busy": False, # skip houses on big roads and never cross them
     # connection
     "auto_reconnect": True,  # keep going / restore the location after a cable or Wi-Fi hiccup
+    # keep the Mac awake
+    "keep_awake": True,      # hold the Mac awake while a trip, a live iOS 17+ simulation or an activated schedule needs it
+    "keep_screen_on": False, # also keep the SCREEN on (off = the screen may go dark, the Mac stays awake)
 }
 
 

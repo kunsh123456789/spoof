@@ -13,7 +13,7 @@ Everything runs on localhost — no accounts, no cloud services, no API keys.
 device status (name, iOS version, clear errors) · click-to-pin map + manual lat/lon · place search ·
 Set / Clear location · **road routes** (walking or driving paths, or a straight line) with adjustable speed ·
 **multi-stop routes** (pauses, looping) · **trick-or-treat mode** (orange theme) · saved favorites ·
-recent locations · **offline areas** (map, houses and streets saved for use without internet) · **realism switches** (GPS noise, natural walking, traffic stops, jump cooldown) · **return trip** · **per-stop speed schedule** · **GPX import** · **saved routes** · **several phones at once** · **Wi-Fi connection** · **auto-reconnect** · **disk-image warning** · dark mode · phone-friendly layout.
+recent locations · **offline areas** (map, houses and streets saved for use without internet) · **realism switches** (GPS noise, natural walking, traffic stops, jump cooldown) · **return trip** · **per-stop speed schedule** · **GPX import** · **saved routes** · **timed plans** (do things at real clock times) · **keeps the Mac awake** when needed · **several phones at once** · **Wi-Fi connection** · **auto-reconnect** · **disk-image warning** · dark mode · phone-friendly layout.
 
 ## Quick start
 
@@ -139,6 +139,21 @@ The bar at the bottom always shows what the phone is doing, with **Stop moving**
   instead; needs road data from OpenStreetMap or a saved offline area, otherwise you get a note), and **Realistic houses** (about
   15% of houses have their lights off and are skipped, shown as 🌑; about 15% become a long chat at the door). Changing an option
   after **Find houses** asks you to press it again.
+* **⏰ Schedule** (timed plans): build a plan of steps that run **by themselves at real clock times**, for example *8:00 PM start trick-or-treat
+  (kids, realistic houses) → 8:30 PM a shaky 5 km/h walk home to an address → 9:00 PM restore real GPS*.
+  1. **＋ New plan**: name, date, which phone, and **Run late steps up to N minutes** (default 10).
+  2. **＋ Add step** for each thing: a **time** and an **action**: 🎃 trick or treat (an address, your pin or your drawn area, number of
+     houses, kids / avoid busy roads / realistic), 🚶 walk or drive to an address (path type, speed, **shaky** = GPS noise + uneven pace for
+     this walk only, optional start place), 🧭 a saved route, 📍 set a location, ⏹ stop moving, or ↩ restore real GPS. Times after midnight roll
+     over to the next day.
+  3. **Save plan**, then switch **Activate** on. A plan never runs unless it is activated; editing a plan switches it off again.
+  4. At each step's time the app does it, then waits for the next. Each step shows ⏳ waiting / ▶ running / ✅ done / ⚠ failed / 🕘 missed / ⏭ skipped
+     with a short note, and **⏵** tests a single step right now. The status bar shows the next step and a countdown.
+  Rules worth knowing: the app must be **open**, the Mac **awake** and the phone **connected** at that time. A step that is late (the Mac slept) still
+  runs up to the late limit and says so; beyond it, it is marked **missed** rather than firing hours later. If several steps are overdue at once only
+  the newest runs (the older ones are *skipped*). A step that fails for a temporary reason (phone not connected yet, no internet) is retried every
+  15 s until its late limit ends. Activating a plan marks steps that are already in the past as missed. Steps that need the internet (finding houses
+  or addresses) need it at that moment, unless an offline area covers the place. The app cannot wake a sleeping Mac; see the next section.
 * **★ Saved**: **Saved routes** (▶ runs one, ✎ loads it into the editor, ✕ deletes it), **Favorites** take a name plus a place name, coordinates like `48.8584, 2.2945`, or nothing (saves the
   current pin). Click one to move the pin there, **＋** adds it as a stop. **Recent** keeps your last 15 locations (each Set
   location and finished route); **★** promotes one to a favorite.
@@ -170,6 +185,26 @@ offline. Large location jumps followed by fast movement are how some apps detect
 
 Command-line options: `python app.py --port 8000 --tunnel auto -v` (`-v` = debug logging). The server binds to
 127.0.0.1 only and has no authentication — don't expose it to a network.
+
+## Keeping the Mac awake (the Caffeinate update)
+
+**Honest limit first:** on iOS 17 and later the fake location only exists while this Mac holds the connection to the phone open. A Mac that is
+truly asleep holds nothing, so the phone goes back to its real GPS until the Mac wakes. No app can change that. iPhones on iOS 16 and earlier keep
+their fake location by themselves (but a running trip still stops while the Mac sleeps).
+
+What the app does instead is stop the Mac from sleeping **whenever it is needed**: while a trip is running, while an iOS 17+ fake location is
+active, while the app is reconnecting, and while an **activated schedule** has steps coming within the next day. It uses macOS's own `caffeinate`
+tool, started with `-w <the app's process id>` so it ends the instant the app does, even if the app crashes: it cannot leave your Mac stuck awake.
+Nothing is held when nothing needs it. Switches (in **Phones & connection**, on by default / off by default): **Keep this Mac awake when needed**
+and **Keep the screen on too** (off: the display may go dark and save power while the Mac stays awake). The status bar shows "☕ Mac kept awake".
+The window app also opts out of macOS **App Nap**, which could otherwise delay timers (and so scheduled steps) while its window is hidden.
+
+What it cannot do:
+* **A MacBook on battery sleeps when you close the lid**, whatever the app asks. To run with the lid shut: plug in power and use an external display
+  with a keyboard or mouse (**clamshell mode**), or simply keep the lid open and turn the brightness down.
+* It cannot **wake** a sleeping Mac for a scheduled step. Leave the Mac awake (plugged in) before the plan's first step.
+* If the Mac slept anyway, the app notices (the wall clock jumps while the monotonic clock does not), shows **"💤 Your Mac was asleep for X"** for 15
+  minutes, re-checks the phone at once, and with **Auto-reconnect** restores the fake location and carries on.
 
 ## What happens when something goes wrong
 
@@ -219,6 +254,8 @@ Wi-Fi may need `tunneld` (see above). If Wi-Fi misbehaves, use the cable.
 | "Could not get a road route" / "No route" | The routing service is down, or the points aren't connected by roads. Try again, or use Straight line. |
 | "Could not look up houses" / "Found only N houses" | The Overpass service is busy (wait a minute), or draw a bigger area over a residential neighborhood (OpenStreetMap needs houses mapped there). |
 | "That area is too big" | Draw a smaller area (max 4 km²). |
+| A scheduled step shows 🕘 missed | The app was closed or the Mac was asleep at that time by more than the plan's late limit. Keep the app open and the Mac awake (plugged in) before the first step. |
+| A scheduled step shows ⚠ failed | Read the note on the step: usually the phone was not connected or there was no internet for the house/address lookup. Use **⏵** to test it. |
 | Phone shows "not connected" | The cable or Wi-Fi dropped. With Auto-reconnect on, just reconnect it; the trip and fake location resume by themselves. |
 | Phone not listed over Wi-Fi | Follow the Wi-Fi steps above; press **Find Wi-Fi phones**; same network; phone awake. Use the cable if it still fails. |
 | "Only one iOS 17+ iPhone can use the built-in tunnel" | Start `tunneld` (see Wi-Fi section) to control several iOS 17+ phones. |
@@ -258,6 +295,8 @@ locspoof/gpx.py        GPX import
 locspoof/routes.py     saved routes
 locspoof/busy.py       busy-road geometry for trick-or-treat
 locspoof/fleet.py      one manager per phone
+locspoof/schedule.py   timed plans: store, validation, scheduler
+locspoof/awake.py      keep the Mac awake (caffeinate) and notice sleep
 locspoof/memory.py     per phone: last iOS version, and the fake location an old iOS phone may still hold
 locspoof/fileio.py     crash-safe file writing used by every data file
 locspoof/geocode.py    Nominatim client (User-Agent, rate limit, cache)

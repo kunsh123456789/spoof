@@ -765,6 +765,26 @@
   });
   setInterval(() => { if (document.visibilityState !== "hidden") loadSchedules(); }, 3000);
 
+  // ---------- keep the Mac awake ----------
+  let awakeInfo = null;
+  const durationText = (s) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : s >= 90 ? `${Math.round(s / 60)} min` : `${Math.round(s)} s`);
+  async function loadAwake() {
+    try { awakeInfo = await api("GET", "/api/awake"); } catch { return; }
+    const a = awakeInfo;
+    let msg;
+    if (!a.supported) msg = `Keeping the Mac awake works on macOS only (this computer: ${a.platform}). Keep your computer awake yourself.`;
+    else if (a.error) msg = `⚠️ ${a.error}`;
+    else if (!a.enabled) msg = "Off: your Mac may fall asleep, which ends the fake location on iOS 17+.";
+    else if (a.active) msg = `☕ Keeping your Mac awake now — ${a.reasons.join(", ")}.${a.screen ? "" : " The screen may still turn off."}`;
+    else msg = "Nothing needs it right now, so your Mac may sleep when idle.";
+    $("awakeState").textContent = msg;
+    const s = a.last_sleep, fresh = s && Date.now() / 1000 - s.woke < 900;               // show it for 15 minutes after waking
+    $("sleepNote").hidden = !fresh;
+    if (fresh) $("sleepNote").textContent = `💤 Your Mac was asleep for ${durationText(s.slept_s)} (until ${new Date(s.woke * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}). On iOS 17+ the phone returned to its real GPS meanwhile; trips and schedule steps paused. The app is reconnecting and restoring the location.`;
+    if (status) nowBar(status);
+  }
+  setInterval(loadAwake, 5000);
+
   // ---------- status polling + bottom bar ----------
   function nowBar(s) {
     const w = s.walk || {}, sim = s.simulation, tot = w.kind === "trick_or_treat";
@@ -789,6 +809,8 @@
     }
     if (s.state === "connecting" && state === "idle") { title = "Connecting to the iPhone…"; detail = "This can take a minute the first time (the disk image is mounted)."; state = "reconnecting"; }
     $("now").dataset.state = state; $("nowTitle").textContent = title; $("nowDetail").textContent = detail;
+    if (awakeInfo?.active && (w.active || sim.active || state !== "idle")) detail += " · ☕ Mac kept awake";
+    $("nowDetail").textContent = detail;
     $("stopBtn").hidden = !w.active; $("clearBtn").hidden = !sim.active;
     $("returnBtn").hidden = !(sim.origin && !w.active && haversine(sim.origin, [sim.lat, sim.lon]) > 3);   // not when already at the start
     const cd = sim.cooldown;
@@ -839,7 +861,7 @@
   (async function init() {
     try { settings = await api("GET", "/api/settings"); } catch { settings = {}; }
     applySettings();
-    await loadDevices();
+    await loadDevices(); loadAwake();
     (function loop() { refresh().finally(() => setTimeout(loop, status?.walk?.active ? 1000 : 3000)); })();
   })();
 

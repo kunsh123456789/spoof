@@ -195,6 +195,7 @@ EXPECTED_ROUTES = {
     ("GET", "/api/schedules"), ("POST", "/api/schedules"), ("PUT", "/api/schedules/{plan_id}"), ("DELETE", "/api/schedules/{plan_id}"),
     ("POST", "/api/schedules/{plan_id}/arm"), ("POST", "/api/schedules/{plan_id}/reset"),
     ("POST", "/api/schedules/{plan_id}/steps/{step_id}/run"),
+    ("GET", "/api/awake"),
     ("GET", "/"),
 }
 

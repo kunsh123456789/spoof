@@ -635,6 +635,21 @@ class DeviceManager:
     def _journey_active(self) -> bool:
         return bool(self._walk_task and not self._walk_task.done())
 
+    def awake_reasons(self) -> list[str]:
+        """Why this phone needs the Mac to stay awake right now (empty = it does not)."""
+        out = []
+        if self._journey_active():
+            out.append("a trip is running")
+        elif self._position is not None and (self._lost or not self._persists()):
+            # iOS 17+: the fake location lasts only while this Mac holds the connection open
+            out.append("the fake location needs the connection")
+        return out
+
+    def on_wake(self) -> None:
+        """The Mac just woke from sleep: forget what we believed about the connection, so it is re-checked at once."""
+        self._last_ok = 0.0
+        self._status_cache = None
+
     def _persists(self) -> bool:
         """Does the phone keep the fake location after we disconnect? (iOS 16 and earlier only)"""
         if self._session is not None:

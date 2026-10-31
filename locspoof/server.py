@@ -1,6 +1,7 @@
 """FastAPI application: JSON API under /api plus the static single-page UI."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field
 from .device import Backend, DeviceManager, JourneyPlan, PmdBackend, Stop
 from .fleet import Fleet
 from .memory import DeviceMemory
+from .awake import KeepAwake, SleepWatch
 from .errors import AppError
 from .favorites import FavoritesStore
 from .gpx import MAX_BYTES as GPX_MAX_BYTES, parse_gpx
@@ -145,6 +147,9 @@ def create_app(
     schedule_clock=time.time,
     schedule_tick: float = 1.0,
     schedule_retry: float = 15.0,
+    keep_awake: Optional[KeepAwake] = None,
+    sleep_watch: Optional[SleepWatch] = None,
+    awake_interval: float = 2.5,
     ambient_tick: float = 2.5,
     rng=None,
     tile_client: Optional[httpx.AsyncClient] = None,
@@ -157,6 +162,8 @@ def create_app(
     settings = SettingsStore(settings_path or ROOT / "settings.json")
     routes = RoutesStore(routes_path or ROOT / "routes.json")
     schedules = SchedulesStore(schedules_path or ROOT / "schedules.json")
+    awake = keep_awake if keep_awake is not None else KeepAwake()
+    watch = sleep_watch if sleep_watch is not None else SleepWatch()
     memory = DeviceMemory(devices_path or ROOT / "devices.json")
 
     def make_manager(be: Backend) -> DeviceManager:
@@ -183,8 +190,12 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await scheduler.start()
+        awake_task = asyncio.create_task(awake_loop(), name="locspoof-awake")
         yield
+        awake_task.cancel()
+        await asyncio.wait({awake_task}, timeout=3)
         await scheduler.stop()
+        awake.close()
         # Closing the session also ends an iOS 17+ simulation; the phones return to real GPS.
         await fleet.shutdown()
 
@@ -385,6 +396,36 @@ def create_app(
 
     scheduler = Scheduler(schedules, execute_step, clock=schedule_clock, tick_every=schedule_tick, retry_every=schedule_retry)
     app.state.scheduler = scheduler
+    app.state.awake = awake
+
+    async def awake_tick() -> None:
+        """Decide whether the Mac must stay awake, and notice if it slept (then re-check every phone at once)."""
+        if watch.check() is not None:
+            for m in fleet.all_managers():
+                m.on_wake()
+        reasons: list[str] = []
+        for m in fleet.all_managers():
+            reasons += m.awake_reasons()
+        if scheduler.wants_awake():
+            reasons.append("an activated schedule is waiting")
+        awake.update(settings.data["keep_awake"] and bool(reasons), reasons, settings.data["keep_screen_on"])
+
+    async def awake_loop() -> None:
+        while True:
+            try:
+                await awake_tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("keep-awake check failed")
+            await asyncio.sleep(awake_interval)
+
+    @app.get("/api/awake")
+    async def awake_state():
+        st = awake.state()
+        st["enabled"] = bool(settings.data["keep_awake"])
+        st["last_sleep"] = watch.last_sleep
+        return st
 
     @app.get("/api/schedules")
     async def list_schedules():

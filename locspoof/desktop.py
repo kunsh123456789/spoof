@@ -84,6 +84,26 @@ def mac_polish(icon: Path = ICON) -> bool:
         return False
 
 
+_activity_token = None   # kept for the life of the process: releasing it would re-enable App Nap
+
+# NSActivityUserInitiated without NSActivityIdleSystemSleepDisabled (bit 20): no App Nap and no sudden termination,
+# but the Mac may still go to sleep (keeping it awake is the job of locspoof.awake, and only when needed).
+NS_ACTIVITY_NO_NAP_ALLOW_SLEEP = 0x00FFFFFF & ~(1 << 20)
+
+
+def prevent_app_nap(reason: str = "iPhone Location trips and scheduled steps") -> bool:
+    """Tell macOS this app has real work to do even when its window is hidden or minimized, so its timers are not
+    throttled ("App Nap"): that could delay a scheduled step or make a trip stutter. Best effort; macOS only."""
+    global _activity_token
+    try:
+        from Foundation import NSProcessInfo  # type: ignore
+
+        _activity_token = NSProcessInfo.processInfo().beginActivityWithOptions_reason_(NS_ACTIVITY_NO_NAP_ALLOW_SLEEP, reason)
+        return True
+    except Exception:
+        return False
+
+
 def _block_until_interrupted() -> None:
     import time
 
@@ -144,6 +164,7 @@ def main(
             return 0
 
         mac_polish()
+        prevent_app_nap()
         webview_module.create_window(
             APP_NAME, url, width=1280, height=860, min_size=(960, 640), text_select=True,
             confirm_close=True, js_api=WindowApi(), background_color="#0f1115",

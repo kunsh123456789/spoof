@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>iPhone Location Simulator</title>
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=15">
+  <link rel="stylesheet" href="/static/style.css?v=16">
 </head>
 <body>
   <div id="map" aria-label="Map"></div>
@@ -28,6 +28,18 @@
         <span><b>Allow connecting over Wi-Fi</b><small id="wifiSmall">Turn this on while the phone is plugged in, then you can unplug it.</small></span></label>
       <label class="sw"><input type="checkbox" data-setting="auto_reconnect"><span class="track"></span>
         <span><b>Auto-reconnect</b><small>If the cable or Wi-Fi drops, wait for the phone, restore the fake location and carry on with the route.</small></span></label>
+      <label class="sw"><input type="checkbox" data-setting="keep_awake"><span class="track"></span>
+        <span><b>☕ Keep this Mac awake when needed</b><small>While a trip, a live iOS 17+ fake location or an activated schedule needs it. The screen may still turn off.</small></span></label>
+      <label class="sw"><input type="checkbox" data-setting="keep_screen_on"><span class="track"></span>
+        <span><b>Keep the screen on too</b><small>Off by default, so the display can go dark and save power.</small></span></label>
+      <p id="awakeState" class="muted"></p>
+      <details class="howto" id="how-awake">
+        <summary>Will it keep working with the Mac asleep or the lid closed?</summary>
+        <p><b>Not while the Mac is truly asleep</b> — and no app can change that. On iOS 17 and later the fake location only exists while this Mac holds the connection to the phone open; a sleeping Mac holds nothing, so the phone goes back to its real GPS until the Mac wakes (then the app restores it).</p>
+        <p>What the app <b>does</b>: stops the Mac from falling asleep by itself whenever it is needed (the screen can still go dark).</p>
+        <p>What it <b>cannot</b> do: closing the lid of a MacBook <b>on battery</b> puts it to sleep no matter what. To run with the lid shut, <b>plug in power and use an external display with a keyboard or mouse</b> (“clamshell mode”) — or simply leave the lid open and turn the brightness down. It also cannot wake a sleeping Mac for a scheduled step, so leave the Mac awake before the plan's first step.</p>
+        <p class="muted">iPhones on iOS 16 and earlier keep their fake location by themselves, so only a running trip needs the Mac awake.</p>
+      </details>
       <details class="howto" id="how-wifi">
         <summary>Wi-Fi setup (no cable)</summary>
         <ol>
@@ -48,6 +60,7 @@
 
     <p id="netNote" class="netnote" hidden>📡 No internet connection — saved offline areas still work.</p>
 
+    <p id="sleepNote" class="notice" hidden></p>
     <div id="notice" class="notice" hidden>
       <strong id="noticeMsg"></strong>
       <p id="noticeHint"></p>
@@ -324,6 +337,6 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/app.js?v=15"></script>
+  <script src="/static/app.js?v=16"></script>
 </body>
 </html>

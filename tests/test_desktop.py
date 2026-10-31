@@ -250,3 +250,37 @@ def test_an_unwritable_log_folder_does_not_stop_the_app(tmp_path):
         for h in [h for h in logging.getLogger().handlers if getattr(h, "_locspoof", False)]:
             logging.getLogger().removeHandler(h)
             h.close()
+
+
+def test_app_nap_is_disabled_without_blocking_sleep(monkeypatch):
+    import sys
+    import types
+
+    seen = {}
+
+    class Info:
+        def beginActivityWithOptions_reason_(self, options, reason):
+            seen["options"], seen["reason"] = options, reason
+            return object()
+
+    fake = types.ModuleType("Foundation")
+    fake.NSProcessInfo = types.SimpleNamespace(processInfo=lambda: Info())
+    monkeypatch.setitem(sys.modules, "Foundation", fake)
+    monkeypatch.setattr(desktop, "_activity_token", None)
+    assert desktop.prevent_app_nap("testing") is True
+    assert seen["reason"] == "testing" and desktop._activity_token is not None          # held for the life of the process
+    assert seen["options"] & (1 << 14) and seen["options"] & (1 << 15)                   # sudden / automatic termination off
+    assert not seen["options"] & (1 << 20)                                               # but the Mac may still sleep when idle
+
+
+def test_app_nap_helper_is_harmless_where_foundation_is_missing(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "Foundation", None)                                 # forces ImportError
+    assert desktop.prevent_app_nap() is False
+
+
+def test_window_launch_disables_app_nap(factory, monkeypatch):
+    called = []
+    monkeypatch.setattr(desktop, "prevent_app_nap", lambda *a: called.append(1) or True)
+    desktop.main(["--port", str(free_port())], webview_module=FakeWebview(), app_factory=factory)
+    assert called == [1]
