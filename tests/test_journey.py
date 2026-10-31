@@ -186,9 +186,9 @@ def test_plan_with_drawn_area_passes_polygon_and_starts_near_pin(env):
     assert count == 4 and len(poly) == 4
     assert (round(lat, 5), round(lon, 5)) == (40.0015, -74.998)  # no pin -> centroid
     c.post("/api/trick-or-treat/plan", json={"polygon": SQUARE, "houses": 4, "lat": 40.001, "lon": -74.999})
-    assert houses.calls[-1][:2] == (40.001, -74.999)               # pin inside the area -> start there
+    assert houses.calls[-1][:2] == (40.001, -74.999)               # a pin -> the tour starts nearest it
     c.post("/api/trick-or-treat/plan", json={"polygon": SQUARE, "houses": 4, "lat": 10, "lon": 10})
-    assert houses.calls[-1][0] == pytest.approx(40.0015)           # pin outside the area is ignored
+    assert houses.calls[-1][:2] == (10, 10)                        # the tour always starts at the house nearest the pin, even if it is outside the area
 
 
 @pytest.mark.parametrize("body,code", [

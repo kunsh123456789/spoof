@@ -207,8 +207,8 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
      longer). Your own position is a pulsing green dot with a little walker above everything else on the map. **Stop moving** ends it, leaving the phone where it is.
   Options (switches on the tab, saved between runs): **Group of kids** (3.2 km/h and 1.6x longer pauses), **Avoid busy roads**
   (houses within 20 m of a motorway/trunk/primary/secondary road are skipped and the tour never crosses one, so it ends early
-  instead; needs road data from OpenStreetMap or a saved offline area, otherwise you get a note), and **Realistic houses** (about
-  15% of houses have their lights off and are skipped, shown as 🌑; about 15% become a long chat at the door). Changing an option
+  instead; needs road data from OpenStreetMap or a saved offline area, otherwise you get a note), **Some houses have their lights off** (20% by default, adjustable; skipped and shown as 🌑), and **Realistic houses** (about
+  15% of houses become a long chat at the door). Changing an option
   after **Find houses** asks you to press it again.
 * **⏰ Schedule** (timed plans): build a plan of steps that run **by themselves at real clock times**, for example *8:00 PM start trick-or-treat
   (kids, realistic houses) → 8:30 PM a shaky 5 km/h walk home to an address → 9:00 PM restore real GPS*.
