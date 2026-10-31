@@ -5,6 +5,19 @@
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode etc. */ } },
   };
+  // Links to other sites (e.g. the map credits) must open in the system browser: in the desktop window a plain
+  // link would navigate away and replace the app.
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a) return;
+    let u; try { u = new URL(a.href, location.href); } catch { return; }
+    if ((u.protocol === "http:" || u.protocol === "https:") && u.origin !== location.origin) {
+      e.preventDefault();
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.open_external) window.pywebview.api.open_external(u.href);
+      else window.open(u.href, "_blank", "noopener");
+    }
+  });
+
   const map = L.map("map", { zoomControl: false }).setView([20, 0], 2);
   L.control.zoom({ position: "topright" }).addTo(map);
   // Tiles come through the local server: saved offline copies first, OpenStreetMap live otherwise.

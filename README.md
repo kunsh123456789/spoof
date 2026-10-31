@@ -22,25 +22,39 @@ cd iphone-location
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python app.py                      # then open http://localhost:8000
+python desktop.py                  # opens the app in its own window (or: python app.py, then open http://localhost:8000)
 ```
 
 Python 3.10+ is required. Nothing is installed system-wide; everything lives in `.venv`.
 
-## Make it a Mac app (double-click to open)
+## Desktop app (its own window)
 
-After the Quick start works, build a launcher app from the project folder:
+The simulator can run in its own window instead of a browser tab (macOS uses the built-in WebKit engine through `pywebview`).
+
+```bash
+python desktop.py            # opens the window
+python desktop.py --browser  # same thing in your default browser (Ctrl+C quits)
+```
+
+To get a normal Mac application you can double-click or keep in the Dock, build it once from the project folder:
 
 ```bash
 ./make_app.sh
 ```
 
-This creates `~/Applications/iPhone Location.app`. Double-click it (or drag it to your Dock): it starts the
-server in a Terminal window and opens http://localhost:8000. If the server is already running it just opens the page.
-To quit, press Ctrl+C in that Terminal window (or close it); on iOS 17+ that also restores the real location.
+This creates `~/Applications/iPhone Location.app` (with its own icon, no Terminal window). Behavior:
 
-The app points at this project folder, so if you move or rename the folder, run `./make_app.sh` again.
-To pick a different location: `./make_app.sh /Applications`.
+* Closing the window (or Cmd+Q) asks for confirmation and then **quits the app**. On iOS 17 and later that also ends the fake
+  location, as before.
+* Opening the app again while it is already running just brings the running copy to the front. If the simulator is already running
+  from Terminal (`python app.py`), the window attaches to it instead of starting a second server.
+* Your tab, switches, closed instruction boxes and chosen phone are remembered between launches.
+* Links to other sites (such as the map credits) open in your normal browser.
+* Its log is `~/Library/Logs/iPhone Location.log`; look there if the app does not open. `python desktop.py` prints the same thing in
+  the terminal (add `-v` for detail, `--debug` for the web inspector).
+* The app points at this project folder and its `.venv`, so if you move or rename the folder, run `./make_app.sh` again. After
+  `git pull` nothing needs rebuilding. For a different location: `./make_app.sh /Applications`.
+* `python app.py` (browser only, no window toolkit needed) still works.
 
 ## One-time iPhone setup
 
@@ -196,6 +210,7 @@ Wi-Fi may need `tunneld` (see above). If Wi-Fi misbehaves, use the cable.
 | Map is grey | OpenStreetMap tiles need internet, or a saved offline area covering this spot (Offline tab). Zooming past level 17 offline shows blank tiles. |
 | "That area is too big" (Offline tab) | Zoom the map in until the neighborhood fills the screen (limit about 6 km²). |
 | Offline route says "no offline map covers these points" | Download an offline area that includes both the start and the destination. |
+| App does not open when double-clicked | Read `~/Library/Logs/iPhone Location.log`. Most often: run `pip install -r requirements.txt` in the project's `.venv` (the window toolkit), then `./make_app.sh` again. |
 | Something else | Run `python app.py -v` and read the terminal; every failure logs a full traceback there. |
 
 pymobiledevice3 changes quickly. This project was written against version 11.x (fully async API). If a future
@@ -231,6 +246,11 @@ locspoof/geocode.py    Nominatim client (User-Agent, rate limit, cache)
 locspoof/favorites.py  JSON favorites store
 locspoof/movement.py   great-circle math
 locspoof/server.py     FastAPI routes
+locspoof/runner.py     server on a background thread, port helpers
+locspoof/desktop.py    native window (pywebview) launcher
+desktop.py             entry point for the window app
+make_app.sh            builds the double-clickable Mac app
+assets/icon.png        app icon (regenerate with tools/make_icon.py)
 static/                the single-page UI (Leaflet vendored in static/vendor)
 tests/                 pytest suite
 ```
