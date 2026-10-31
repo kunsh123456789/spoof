@@ -72,6 +72,21 @@ It talks to the app on the Mac over your **home Wi-Fi** (both devices on the sam
 The remote has two tabs: **Places** (search, tap the map, favorites, recents, **Set location here**) and **Trip** (walk, drive or straight line to the pin; run saved routes; Stop / Back to start / Real GPS).
 If several iPhones are connected there is a phone picker at the top. The top bar always shows what the iPhone is doing and how far along a trip is.
 
+### Using it away from home (other Wi-Fi, mobile data)
+
+The remote normally only works on the same Wi-Fi as the Mac. To use it from anywhere, use the free **Tailscale** app: it puts your Mac and your phone on a
+private, encrypted network (no router settings, nothing exposed to the internet). The iPhone that is *being spoofed* must stay connected to the Mac (cable or the
+same Wi-Fi), so this is for: **phone A stays at the Mac, phone B is your remote.**
+
+1. Install Tailscale on the Mac (<https://tailscale.com/download>, or the Mac App Store) and on the remote phone (App Store). Sign in with the **same account** on both.
+2. Make sure Tailscale shows *Connected* on both (on the phone, its toggle must be on).
+3. In the Mac app: ⚙ Settings → Phone remote. A **🌍 anywhere** address appears (something like `http://your-mac.tailnet-name.ts.net:8787/remote`).
+4. On the remote phone open **that** address in Safari, pair with the code, and Add to Home Screen. Use only the 🌍 address from then on: it works at home and away. (A phone
+   remembers its pairing per address, so a home-Wi-Fi address and the 🌍 address each need to be paired once.)
+5. The Mac must be **awake**, online and running the app (see *Keeping the Mac awake*). Mobile data is fine on the phone.
+
+Tailscale traffic is encrypted, which also fixes the "plain http" caveat below for the 🌍 address. If the remote says it can't reach the Mac, check that Tailscale is on in both places.
+
 **Safety:** it is **off by default**. The normal app stays reachable from this Mac only; switching the remote on opens a *second* port (8787) on
 your network. Without pairing, a device can only load the remote page. Pairing needs the 6-digit code shown on the Mac (valid 10 minutes, one use, locked
 after 5 wrong tries). A paired phone can only control the location: it can never change settings, download maps, edit plans or manage other phones

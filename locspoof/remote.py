@@ -15,7 +15,9 @@ import json
 import logging
 import re
 import secrets
+import shutil
 import socket
+import subprocess
 import threading
 import time
 import uuid
@@ -177,6 +179,55 @@ def lan_addresses() -> list[str]:
     except OSError:
         pass
     return found
+
+
+def parse_ifconfig(text: str) -> list[str]:
+    """Addresses in Tailscale's range (100.64.0.0/10) from `ifconfig` output."""
+    out = []
+    for m in re.finditer(r"\binet (\d+)\.(\d+)\.(\d+)\.(\d+)", text or ""):
+        a, b, c, d = map(int, m.groups())
+        if a == 100 and 64 <= b <= 127:
+            out.append(f"{a}.{b}.{c}.{d}")
+    return out
+
+
+def parse_tailscale_status(text: str) -> dict:
+    """{"running": bool, "dns": "mac.tailnet.ts.net" | None, "ips": [...]} from `tailscale status --json`."""
+    try:
+        d = json.loads(text)
+        me = d.get("Self") or {}
+        return {"running": d.get("BackendState") == "Running", "dns": (me.get("DNSName") or "").rstrip(".") or None,
+                "ips": [i for i in me.get("TailscaleIPs", []) if "." in i]}
+    except (ValueError, AttributeError, TypeError):
+        return {"running": False, "dns": None, "ips": []}
+
+
+_ts_cache: tuple[float, dict] = (0.0, {})
+
+
+def tailscale_info(max_age: float = 15.0) -> dict:
+    """Is Tailscale (a free private network app) set up on this Mac? Best effort, cached for a few seconds."""
+    global _ts_cache
+    if time.monotonic() - _ts_cache[0] < max_age and _ts_cache[1]:
+        return _ts_cache[1]
+    info = {"installed": False, "running": False, "dns": None, "ips": []}
+    cli = shutil.which("tailscale") or next((p for p in ("/Applications/Tailscale.app/Contents/MacOS/Tailscale",) if Path(p).exists()), None)
+    info["installed"] = bool(cli)
+    try:
+        info["ips"] = parse_ifconfig(subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=3).stdout)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if cli:
+        try:
+            st = parse_tailscale_status(subprocess.run([cli, "status", "--json"], capture_output=True, text=True, timeout=4).stdout)
+            info["running"], info["dns"] = st["running"], st["dns"]
+            info["ips"] = st["ips"] or info["ips"]
+        except (OSError, subprocess.SubprocessError):
+            pass
+    info["running"] = info["running"] or bool(info["ips"])
+    info["installed"] = info["installed"] or bool(info["ips"])
+    _ts_cache = (time.monotonic(), info)
+    return info
 
 
 def bonjour_name() -> Optional[str]:

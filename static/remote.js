@@ -14,7 +14,7 @@
     const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), opts.timeout || 20000);
     let res;
     try { res = await fetch(path, { method, headers, signal: ctl.signal, body: body === undefined ? undefined : JSON.stringify(body) }); }
-    catch (e) { throw { message: e && e.name === "AbortError" ? "The Mac did not answer in time." : "Can't reach the Mac.", hint: "Is the app open, and are you on the same Wi-Fi?", offline: true }; }
+    catch (e) { throw { message: e && e.name === "AbortError" ? "The Mac did not answer in time." : "Can't reach the Mac.", hint: "Is the Mac awake with the app open, and are you on its Wi-Fi (or is Tailscale turned on)?", offline: true }; }
     finally { clearTimeout(timer); }
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) { showPair(); throw { message: "Not paired.", unauth: true }; }

@@ -1194,7 +1194,9 @@
     if (!r.enabled) return;
     $("remoteErr").hidden = !(r.error || !r.running);
     $("remoteErr").textContent = r.error ? `⚠️ ${r.error}` : !r.running ? "Starting…" : "";
-    $("remoteUrls").replaceChildren(...(r.urls.length ? r.urls.map((u) => { const el = li(u); el.querySelector(".name").classList.add("mono"); el.title = "Click to copy"; el.onclick = () => { navigator.clipboard?.writeText(u); toast("Address copied."); }; return el; }) : [li("Could not find this Mac's Wi-Fi address. Is it on Wi-Fi?")]));
+    $("remoteUrls").replaceChildren(...(r.urls.length ? r.urls.map((u) => { const el = li(u.url); el.querySelector(".name").classList.add("mono"); el.title = "Click to copy"; el.onclick = () => { navigator.clipboard?.writeText(u.url); toast("Address copied."); };
+      const tag = document.createElement("span"); tag.className = "badge"; tag.textContent = u.kind === "tailscale" ? "🌍 anywhere" : "🏠 home Wi-Fi"; el.append(tag); return el; }) : [li("Could not find this Mac's address. Is it on Wi-Fi?")]));
+    $("remoteAway").hidden = !!(r.tailscale && r.tailscale.running);
     $("remoteCode").textContent = r.code ? `${r.code.code}  ·  ${Math.max(1, Math.round(r.code.expires_in / 60))} min` : "";
     $("remoteDevices").replaceChildren(...(r.devices.length ? r.devices.map((d) => li(`${d.name}${d.last_seen ? " · seen " + new Date(d.last_seen * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}`)).map((el, i) => (el.append(miniBtn("✕", `Forget ${r.devices[i].name}`, async () => { if (!confirm(`Forget “${r.devices[i].name}”? It will have to pair again.`)) return; try { await api("DELETE", `/api/remote/devices/${r.devices[i].id}`); loadRemote(); } catch (e) { fail(e); } })), el)) : [li("No phones paired yet.")]));
   }

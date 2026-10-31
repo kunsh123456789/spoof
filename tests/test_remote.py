@@ -169,3 +169,27 @@ def test_check_request_pure(tmp_path):
     assert check_request(s, "GET", "/api/status", "", "")[0] == 401
     assert check_request(s, "GET", "/static/app.js", "", "")[0] == 401
     assert check_request(s, "POST", "/api/remote/step", "", "")[0] == 401           # the full Mac UI is not served to the network
+
+
+# ---- reaching the Mac from anywhere (Tailscale) ----
+def test_tailscale_detection_parsers():
+    from locspoof.remote import parse_ifconfig, parse_tailscale_status
+    text = "lo0: inet 127.0.0.1 netmask 0xff\nen0: inet 192.168.1.5 netmask 0xffffff00\nutun4: inet 100.101.102.103 --> 100.101.102.103 netmask 0xffffffff\nen9: inet 100.200.1.1"
+    assert parse_ifconfig(text) == ["100.101.102.103"]                                   # 100.200.x is not Tailscale's range
+    st = parse_tailscale_status('{"BackendState": "Running", "Self": {"DNSName": "macbook.tail1234.ts.net.", "TailscaleIPs": ["100.1.2.3", "fd7a::1"]}}')
+    assert st == {"running": True, "dns": "macbook.tail1234.ts.net", "ips": ["100.1.2.3"]}
+    assert parse_tailscale_status("garbage") == {"running": False, "dns": None, "ips": []}
+    assert parse_tailscale_status('{"BackendState": "Stopped"}')["running"] is False
+
+
+def test_the_mac_lists_tailscale_addresses_first_and_a_tailscale_client_still_needs_pairing(mac, monkeypatch):
+    import locspoof.server as server
+    monkeypatch.setattr(server, "tailscale_info", lambda: {"installed": True, "running": True, "dns": "macbook.tail1234.ts.net", "ips": ["100.1.2.3"]})
+    mac.patch("/api/settings", json={"remote_enabled": True})
+    r = mac.get("/api/remote").json()
+    assert [u["kind"] for u in r["urls"]][:2] == ["tailscale", "tailscale"] and r["urls"][0]["url"] == "http://macbook.tail1234.ts.net:8787/remote"
+    assert r["tailscale"] == {"installed": True, "running": True}
+    far = TestClient(mac.app, client=("100.64.9.9", 4000))                              # a phone arriving over Tailscale
+    assert far.get("/api/status").status_code == 401 and far.get("/remote").status_code == 200
+    h = pair(mac, far)
+    assert far.get("/api/status", headers=h).status_code == 200 and far.get("/api/settings", headers=h).status_code == 403

@@ -7,8 +7,8 @@
   <title>iPhone Location Simulator</title>
   <link rel="icon" href="/static/icon.png">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=27">
-  <link rel="stylesheet" href="/static/fun.css?v=27">
+  <link rel="stylesheet" href="/static/style.css?v=28">
+  <link rel="stylesheet" href="/static/fun.css?v=28">
 </head>
 <body>
   <!-- ======================= top bar ======================= -->
@@ -430,8 +430,9 @@
       <span><b>Control this app from my iPhone</b><small>Lets a phone on the same Wi-Fi that you pair with a code open a remote control: map, search, trips, panic. Off = only this Mac can use the app.</small></span></label>
     <div id="remoteBox" hidden>
       <p id="remoteErr" class="muted" hidden></p>
-      <p class="muted">1. On the iPhone, open Safari and type one of these (same Wi-Fi as this Mac):</p>
+      <p class="muted">1. On the iPhone, open Safari and type one of these (🏠 needs the same Wi-Fi as this Mac, 🌍 works anywhere):</p>
       <ul id="remoteUrls" class="list"></ul>
+      <p id="remoteAway" class="infocard" hidden>🌍 <b>Want it to work away from home, or on mobile data?</b> Install the free <b>Tailscale</b> app on this Mac and on the iPhone remote, sign in to the same account on both, then use the <b>🌍 anywhere</b> address that appears here (it works at home too, so use only that one). Steps are in the README (“Phone remote”).</p>
       <p class="muted">2. Press the button, then type the 6 digits on the iPhone:</p>
       <div class="row"><button id="remoteCodeBtn" class="secondary">New pairing code</button><b id="remoteCode" class="bigcode"></b></div>
       <p class="muted">3. In Safari press Share → <b>Add to Home Screen</b> to get an app icon. Paired phones:</p>
@@ -475,7 +476,7 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/fun.js?v=27"></script>
-  <script src="/static/app.js?v=27"></script>
+  <script src="/static/fun.js?v=28"></script>
+  <script src="/static/app.js?v=28"></script>
 </body>
 </html>

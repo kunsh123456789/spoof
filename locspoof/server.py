@@ -33,7 +33,7 @@ from .schedule import SchedulesStore, Scheduler, clean_plan
 from . import signals as signals_mod
 from .california import CA_BOX
 from .panic import PanicStore
-from .remote import RemoteListener, RemoteStore, bonjour_name, check_request, is_local, lan_addresses
+from .remote import RemoteListener, RemoteStore, bonjour_name, check_request, is_local, lan_addresses, tailscale_info
 from .settings import SettingsStore
 from .trickortreat import HouseFinder
 
@@ -713,12 +713,17 @@ def create_app(
     @app.get("/api/remote")
     async def remote_state():
         port = int(settings.data.get("remote_port", 8787))
-        addrs = [f"http://{a}:{port}/remote" for a in lan_addresses()]
+        ts = await asyncio.to_thread(tailscale_info)
+        urls = []
+        if ts["running"]:                                  # works from anywhere (and at home too)
+            urls += [{"url": f"http://{ts['dns']}:{port}/remote", "kind": "tailscale"}] if ts["dns"] else []
+            urls += [{"url": f"http://{ip}:{port}/remote", "kind": "tailscale"} for ip in ts["ips"]]
         bn = bonjour_name()
         if bn:
-            addrs.insert(0, f"http://{bn}:{port}/remote")
+            urls.append({"url": f"http://{bn}:{port}/remote", "kind": "wifi"})
+        urls += [{"url": f"http://{a}:{port}/remote", "kind": "wifi"} for a in lan_addresses() if a not in ts["ips"]]
         return {"enabled": bool(settings.data.get("remote_enabled")), "running": bool(remote.running), "port": port, "error": remote.error,
-                "urls": addrs, "code": remote_store.current_code(), "devices": remote_store.listing()}
+                "urls": urls, "tailscale": {"installed": ts["installed"], "running": ts["running"]}, "code": remote_store.current_code(), "devices": remote_store.listing()}
 
     @app.post("/api/remote/code")
     async def remote_new_code():
