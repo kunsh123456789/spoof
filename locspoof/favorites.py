@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 
 from .errors import AppError
+from .fileio import atomic_write
 from .movement import validate_coords
 
 log = logging.getLogger("locspoof.favorites")
@@ -63,12 +64,4 @@ class FavoritesStore:
             return []
 
     def _write(self, items: list[dict]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(items, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, self.path)
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise
+        atomic_write(self.path, json.dumps(items, indent=2, ensure_ascii=False).encode("utf-8"))

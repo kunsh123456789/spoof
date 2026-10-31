@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from .errors import AppError
+from .fileio import atomic_write
 
 log = logging.getLogger("locspoof.settings")
 
@@ -47,12 +48,8 @@ class SettingsStore:
             if not isinstance(v, bool):
                 raise AppError("bad_setting", f"Setting “{k}” must be on or off.", status=422)
         self.data.update(changes)
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent if self.path.parent.exists() else None, suffix=".tmp")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2)
-            os.replace(tmp, self.path)
+            atomic_write(self.path, json.dumps(self.data, indent=2).encode("utf-8"))
         except OSError:
-            Path(tmp).unlink(missing_ok=True)
             log.exception("could not save settings")
         return self.data

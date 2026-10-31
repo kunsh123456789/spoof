@@ -617,9 +617,10 @@
       $("bannerMsg").textContent = s.error?.message || ""; $("bannerHint").textContent = s.error?.hint || "";
       $("trustBtn").hidden = s.state !== "not_trusted"; banner.hidden = false;
     }
-    const warn = (s.warnings || [])[0];
-    $("notice").hidden = !warn;
-    if (warn) { $("noticeMsg").textContent = `ℹ️ ${warn.message}`; $("noticeHint").textContent = warn.hint || ""; }
+    const warns = s.warnings || [];                          // e.g. a leftover fake location AND an unmounted disk image
+    $("notice").hidden = !warns.length;
+    $("noticeMsg").textContent = warns.map((w) => `ℹ️ ${w.message}`).join("  ");
+    $("noticeHint").textContent = warns.map((w) => w.hint).filter(Boolean).join("  ");
     const sim = s.simulation;
     if (sim.active) {
       const icon = L.divIcon({ className: "", html: '<div class="sim-marker"></div>', iconSize: [18, 18] });

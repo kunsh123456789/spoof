@@ -3,7 +3,8 @@
 # Usage: ./make_app.sh [destination-folder]      (default: ~/Applications)
 #
 # The app is a small launcher that points at this project folder and its .venv, so don't move the folder
-# afterwards (run this script again if you do). Its log is ~/Library/Logs/iPhone Location.log.
+# afterwards (run this script again if you do). Logs: ~/Library/Logs/iPhone Location.log (rotated)
+# and iPhone Location.startup.log (only if it crashes while starting).
 set -euo pipefail
 
 PROJECT="$(cd "$(dirname "$0")" && pwd)"
@@ -58,9 +59,10 @@ PLIST
   echo '#!/bin/bash'
   printf 'PROJECT=%q\n' "$PROJECT"
   cat <<'LAUNCH'
-LOG="$HOME/Library/Logs/iPhone Location.log"
+LOG="$HOME/Library/Logs/iPhone Location.startup.log"   # only start-up crashes land here; the app keeps its own rotated log
 mkdir -p "$(dirname "$LOG")"
 cd "$PROJECT" || exit 1
+: > "$LOG"
 exec "$PROJECT/.venv/bin/python" "$PROJECT/desktop.py" "$@" >>"$LOG" 2>&1
 LAUNCH
 } > "$APP/Contents/MacOS/launch"
@@ -68,4 +70,4 @@ chmod +x "$APP/Contents/MacOS/launch"
 
 echo "Created: $APP"
 echo "Double-click it (or drag it to your Dock). Closing the window quits the app."
-echo "If it does not open, look at:  ~/Library/Logs/iPhone Location.log"
+echo "If it does not open, look at:  ~/Library/Logs/iPhone Location.startup.log  and  iPhone Location.log"

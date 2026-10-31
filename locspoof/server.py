@@ -30,6 +30,7 @@ from .trickortreat import HouseFinder
 
 log = logging.getLogger("locspoof.server")
 ROOT = Path(__file__).resolve().parent.parent
+MAX_BODY_BYTES = 25 * 1024 * 1024
 STATIC = ROOT / "static"
 
 
@@ -174,6 +175,15 @@ def create_app(
         """The phone a request is about: the X-Device header (a UDID), else the first phone found."""
         return await fleet.get(x_device)
 
+
+    @app.middleware("http")
+    async def limit_body(request: Request, call_next):
+        # Nothing legitimate is anywhere near this big; refusing early keeps one bad request from eating memory.
+        length = request.headers.get("content-length", "")
+        if length.isdigit() and int(length) > MAX_BODY_BYTES:
+            return JSONResponse({"error": {"code": "too_large", "message": "That request is too large.",
+                                           "hint": "Files over 25 MB are not accepted."}}, status_code=413)
+        return await call_next(request)
 
     @app.middleware("http")
     async def no_cache(request: Request, call_next):

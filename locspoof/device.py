@@ -43,10 +43,17 @@ CALL_TIMEOUT_S = 12.0       # one location update; a phone that sleeps mid-call 
 PROBE_TIMEOUT_S = 20.0
 OPEN_TIMEOUT_S = 300.0      # opening a session can include mounting the disk image
 CLOSE_TIMEOUT_S = 5.0
+MEMORY_SAVE_EVERY_S = 30.0    # while a trip runs, the phone's remembered position is saved at most this often
 LIST_INFO_TTL_S = 60.0        # how long a phone's name/iOS version is reused when listing phones
 LIST_QUERY_TIMEOUT_S = 8.0
 STOP_GRACE_S = 3.0          # how long Stop waits for the update in flight before cancelling it
 HEALTHY_WINDOW_S = 6.0      # a device call succeeded this recently = the phone is fine, no need to probe it
+STALE_WARNING = {
+    "code": "stale_simulation",
+    "message": "This iPhone may still be using the fake location from your last session.",
+    "hint": "iPhones on iOS 16 and earlier keep a fake location until it is cleared, even after the app was closed. "
+            "Press Restore real GPS to clear it.",
+}
 TRANSIENT_CODES = {"no_device", "connection_lost", "device_error", "usbmuxd_unavailable"}
 
 
@@ -599,6 +606,8 @@ class DeviceManager:
         self._last_ok = 0.0                                    # when a device call last succeeded
         self._last_base: Optional[dict] = None                 # the last "ready"/error part of status
         self._stop_requested = False                           # asks the running trip to stop at a safe point
+        self._sim_saved = float("-inf")                        # when the position was last written to devices.json
+        self._stale_notice = False                             # the position came from a previous session (app was killed)
         self._rng = rng or random.Random()
         self._noise = NoiseModel(rng=self._rng)
         self._route_points: list[list[float]] = []
@@ -637,19 +646,20 @@ class DeviceManager:
     async def status(self, force: bool = False) -> dict:
         now = time.monotonic()
         if not force and self._status_cache and now - self._status_cache[0] < STATUS_CACHE_S:
-            return {**self._status_cache[1], **self._sim_state()}
+            return self._compose(self._status_cache[1])
         if not force and self._healthy():
             # Skip the handshake: it would only compete with the trip for the phone (slow on Wi-Fi).
-            return {**self._last_base, **self._sim_state()}       # type: ignore[arg-type]
+            return self._compose(self._last_base)       # type: ignore[arg-type]
         if self._lock.locked() and not force:
             # Something slow is using the phone (opening a session, mounting the disk image...): answer at once.
             base = self._last_base or {"state": "connecting", "device": None, "error": None, "warnings": []}
-            return {**base, **self._sim_state()}
+            return self._compose(base)
         async with self._lock:
             try:
                 info = await asyncio.wait_for(self.backend.probe(), self.probe_timeout)
                 base = {"state": "ready", "device": info.to_dict(), "error": None, "warnings": self._warnings(info)}
                 self._info = info
+                self._resume_from_memory(info)
                 if self._lost and self._position and self._on("auto_reconnect") and not self._journey_active():
                     await self._restore_position()
             except asyncio.TimeoutError:
@@ -661,7 +671,14 @@ class DeviceManager:
                     await self._device_gone()
         self._last_base = base
         self._status_cache = (time.monotonic(), base)
-        return {**base, **self._sim_state()}
+        return self._compose(base)
+
+    def _compose(self, base: dict) -> dict:
+        """The answer for /api/status: the phone part plus the live simulation/trip state (and the stale-location notice)."""
+        out = {**base, **self._sim_state()}
+        if self._stale_notice:
+            out["warnings"] = [*base.get("warnings", []), STALE_WARNING]
+        return out
 
     def _warnings(self, info: DeviceInfo) -> list[dict]:
         """Non-blocking heads-ups about the phone (shown as a notice, not an error)."""
@@ -677,6 +694,30 @@ class DeviceManager:
                         "automatically (it can take a minute). It also needs mounting again after the phone restarts.",
             })
         return out
+
+    def _remember_sim(self, force: bool = False) -> None:
+        """Phones on iOS 16 and earlier keep the fake location even if this app dies, so write down where it is
+        (iOS 17+ drops it with the connection: nothing to remember). Throttled: never one disk write per step."""
+        if not (self.memory and self._info and self._position and self._persists()):
+            return
+        now = time.monotonic()
+        if force or now - self._sim_saved >= MEMORY_SAVE_EVERY_S:
+            self._sim_saved = now
+            self.memory.set_sim(self._info.udid, *self._position)
+
+    def _forget_sim(self) -> None:
+        if self.memory and self._info:
+            self.memory.clear_sim(self._info.udid)
+
+    def _resume_from_memory(self, info: DeviceInfo) -> None:
+        """After a restart: if this phone was left with a fake location, show it (with a Restore button)."""
+        if self.memory is None or self._position is not None or info.major >= 17:
+            return
+        rec = self.memory.get_sim(info.udid)
+        if rec:
+            log.info("this phone may still have a fake location from the last session: %.6f, %.6f", *rec)
+            self._position, self._stale_notice = rec, True
+            self._ensure_ambient()
 
     async def set_wifi(self, enabled: bool) -> None:
         async with self._lock:
@@ -801,6 +842,7 @@ class DeviceManager:
                 async with self._lock:
                     await self._run(lambda s: s.set(*send))
                     self._position = (lat, lon)
+                self._remember_sim()
                 self._lost = False
                 if self._walk.get("state") == "reconnecting":
                     self._walk["state"] = "moving"
@@ -824,6 +866,8 @@ class DeviceManager:
             self._position = (lat, lon)
             self._lost = False
         self._note_jump(prev, (lat, lon))
+        self._stale_notice = False
+        self._remember_sim(force=True)
         self._ensure_ambient()
         log.info("location set to %.6f, %.6f", lat, lon)
         self._status_cache = None
@@ -844,6 +888,8 @@ class DeviceManager:
             self._origin = None
             self._cooldown = None
             self._lost = False
+            self._stale_notice = False
+            self._forget_sim()
         log.info("location simulation cleared (session was %s)", "open" if had_session else "closed")
         self._status_cache = None
         return self._sim_state()
@@ -908,6 +954,7 @@ class DeviceManager:
         self._walk_task = None
         self._walk = {}
         self._route_points = []
+        self._remember_sim(force=True)
 
     def _check_stop(self) -> None:
         if self._stop_requested:
@@ -999,6 +1046,8 @@ class DeviceManager:
             await self.set_location(*origin)
         self._origin = origin
         self._last_plan = plan
+        self._stale_notice = False
+        self._remember_sim(force=True)
         self._route_points = [[lat, lon] for leg in legs for lat, lon in leg.points]
         self._walk = {
             "kind": plan.kind, "mode": plan.mode, "speed_kmh": speed, "cur_speed_kmh": speed, "loop": bool(cycle),
@@ -1063,6 +1112,7 @@ class DeviceManager:
                 if leg.dwell_s:
                     await self._dwell(leg.dwell_s)
             self._walk.update(state="done", remaining_m=0.0, wait_left_s=0.0, returning=False)
+            self._remember_sim(force=True)
             if self._position and self.on_finish:
                 self.on_finish(*self._position)
             log.info("journey finished")

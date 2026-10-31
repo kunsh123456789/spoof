@@ -28,6 +28,7 @@ from typing import Optional
 import httpx
 
 from .errors import AppError
+from .fileio import atomic_write  # noqa: F401  (re-exported: the downloader and tests use offline.atomic_write)
 from .movement import EARTH_RADIUS_M, haversine_m, point_in_polygon, polygon_area_m2
 from .trickortreat import USER_AGENT, HouseFinder, dedupe, parse_points
 
@@ -50,23 +51,6 @@ Point = tuple[float, float]
 # ---------------------------------------------------------------------------------------------
 # safe file writing
 # ---------------------------------------------------------------------------------------------
-
-def atomic_write(path: Path, data: bytes) -> None:
-    """Write a file so that it is either complete or absent: never half written (a crash, a full disk or a
-    power cut between the write and the rename leaves the old file, or nothing, in place)."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
 
 def is_png(path: Path) -> bool:
     """Is this a real (not truncated or replaced-by-a-web-page) PNG? Checks the signature only: cheap."""

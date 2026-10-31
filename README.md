@@ -50,8 +50,9 @@ This creates `~/Applications/iPhone Location.app` (with its own icon, no Termina
   from Terminal (`python app.py`), the window attaches to it instead of starting a second server.
 * Your tab, switches, closed instruction boxes and chosen phone are remembered between launches.
 * Links to other sites (such as the map credits) open in your normal browser.
-* Its log is `~/Library/Logs/iPhone Location.log`; look there if the app does not open. `python desktop.py` prints the same thing in
-  the terminal (add `-v` for detail, `--debug` for the web inspector).
+* Its log is `~/Library/Logs/iPhone Location.log` (kept small: it rotates at 2 MB and keeps 3 old files). If the app crashes while
+  *starting*, the reason is in `~/Library/Logs/iPhone Location.startup.log`. `python desktop.py` prints the same thing in the terminal
+  (add `-v` for detail, `--debug` for the web inspector).
 * The app points at this project folder and its `.venv`, so if you move or rename the folder, run `./make_app.sh` again. After
   `git pull` nothing needs rebuilding. For a different location: `./make_app.sh /Applications`.
 * `python app.py` (browser only, no window toolkit needed) still works.
@@ -170,6 +171,22 @@ offline. Large location jumps followed by fast movement are how some apps detect
 Command-line options: `python app.py --port 8000 --tunnel auto -v` (`-v` = debug logging). The server binds to
 127.0.0.1 only and has no authentication — don't expose it to a network.
 
+## What happens when something goes wrong
+
+| Situation | What the app does |
+|---|---|
+| The phone stops answering (asleep on Wi-Fi, flaky cable) | Every call to the phone is time-limited (12 s). A stuck connection is dropped and replaced by a fresh one; the buttons, status and **Restore real GPS** keep working. |
+| Cable or Wi-Fi drops during a trip | With **Auto-reconnect** the trip pauses ("📡 Reconnecting…"), the fake location is restored when the phone is back and the trip continues (gives up after 10 minutes). |
+| You press **Stop** | The update being sent finishes first (cutting it in half could confuse the phone's connection); only if the phone is not answering is it cancelled after 3 s. |
+| Internet drops | Route, search and house lookups retry (a few seconds apart) and then show a plain message; **Straight line**, typed coordinates and saved offline areas keep working. A trip already started never needs internet. |
+| A web page answers instead of the service (hotel/airport Wi-Fi login) | It is recognised as not the real answer: no bad map tile or half-empty offline area is saved, and you get a friendly message. |
+| An offline download is interrupted (quit, crash, disk full) | Files are written atomically (never half written); leftovers are cleaned up at the next start; a broken saved tile is repaired automatically; a full disk gives a clear message. |
+| The app is killed or crashes during a trip | **iOS 17+:** the fake location ends by itself the moment the connection closes (your real GPS returns). **iOS 16 and earlier:** the phone *keeps* the fake location, so the app writes down where it is and, on the next start, shows it with a notice and a **Restore real GPS** button. |
+| The server part of the window app dies | It is restarted automatically (up to 3 times). |
+| A settings or data file is corrupt | The app still starts; the bad file is set aside (`*.corrupt.json`) and an empty one is used. |
+
+Everything the app saves (favorites, recents, routes, settings, offline areas) is written crash-safely, so a power cut cannot leave a half-written file.
+
 ## Wi-Fi (no cable)
 
 1. Plug the iPhone in **once**, tap Trust, turn on Developer Mode.
@@ -210,7 +227,7 @@ Wi-Fi may need `tunneld` (see above). If Wi-Fi misbehaves, use the cable.
 | Map is grey | OpenStreetMap tiles need internet, or a saved offline area covering this spot (Offline tab). Zooming past level 17 offline shows blank tiles. |
 | "That area is too big" (Offline tab) | Zoom the map in until the neighborhood fills the screen (limit about 6 km²). |
 | Offline route says "no offline map covers these points" | Download an offline area that includes both the start and the destination. |
-| App does not open when double-clicked | Read `~/Library/Logs/iPhone Location.log`. Most often: run `pip install -r requirements.txt` in the project's `.venv` (the window toolkit), then `./make_app.sh` again. |
+| App does not open when double-clicked | Read `~/Library/Logs/iPhone Location.startup.log` (and `iPhone Location.log`). Most often: run `pip install -r requirements.txt` in the project's `.venv` (the window toolkit), then `./make_app.sh` again. |
 | Something else | Run `python app.py -v` and read the terminal; every failure logs a full traceback there. |
 
 pymobiledevice3 changes quickly. This project was written against version 11.x (fully async API). If a future
@@ -241,7 +258,8 @@ locspoof/gpx.py        GPX import
 locspoof/routes.py     saved routes
 locspoof/busy.py       busy-road geometry for trick-or-treat
 locspoof/fleet.py      one manager per phone
-locspoof/memory.py     last-seen iOS version per phone (for the disk-image notice)
+locspoof/memory.py     per phone: last iOS version, and the fake location an old iOS phone may still hold
+locspoof/fileio.py     crash-safe file writing used by every data file
 locspoof/geocode.py    Nominatim client (User-Agent, rate limit, cache)
 locspoof/favorites.py  JSON favorites store
 locspoof/movement.py   great-circle math

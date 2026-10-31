@@ -188,10 +188,11 @@ def test_missing_pywebview_without_a_terminal_exits_with_a_clear_code(factory, m
 def test_a_server_that_cannot_start_returns_an_error_code(monkeypatch):
     class Broken:
         def __init__(self, *a, **k): pass
+        url = "x"
         def start(self, *a, **k): raise RuntimeError("boom")
         def stop(self): pass
 
-    monkeypatch.setattr(desktop, "ServerThread", Broken)
+    monkeypatch.setattr(desktop, "ServerSupervisor", Broken)
     assert desktop.main(["--port", str(free_port())], webview_module=FakeWebview(), app_factory=lambda t: object()) == 1
 
 
@@ -215,3 +216,37 @@ def test_mac_polish_is_harmless_without_pyobjc():
 def test_storage_dir_is_a_per_user_folder():
     d = desktop.storage_dir()
     assert str(d).startswith(str(desktop.Path.home()))
+
+
+def test_log_file_is_rotated_and_setup_is_repeatable(tmp_path):
+    import logging
+    from logging.handlers import RotatingFileHandler
+
+    path = tmp_path / "logs" / "app.log"
+    desktop.setup_logging(False, path)
+    desktop.setup_logging(False, path)                                    # calling it twice must not duplicate handlers
+    ours = [h for h in logging.getLogger().handlers if getattr(h, "_locspoof", False)]
+    try:
+        files = [h for h in ours if isinstance(h, RotatingFileHandler)]
+        assert len(files) == 1 and files[0].maxBytes == 2_000_000 and files[0].backupCount == 3
+        logging.getLogger("locspoof.test").info("hello log")
+        for h in ours:
+            h.flush()
+        assert "hello log" in path.read_text()
+    finally:
+        for h in ours:
+            logging.getLogger().removeHandler(h)
+            h.close()
+
+
+def test_an_unwritable_log_folder_does_not_stop_the_app(tmp_path):
+    import logging
+    blocker = tmp_path / "file"
+    blocker.write_text("not a folder")
+    desktop.setup_logging(False, blocker / "sub" / "app.log")            # parent is a file -> cannot be created
+    try:
+        logging.getLogger("x").info("still logging to the console")
+    finally:
+        for h in [h for h in logging.getLogger().handlers if getattr(h, "_locspoof", False)]:
+            logging.getLogger().removeHandler(h)
+            h.close()
