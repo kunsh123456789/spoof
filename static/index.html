@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>iPhone Location Simulator</title>
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=11">
+  <link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 <body>
   <div id="map" aria-label="Map"></div>
@@ -57,6 +57,7 @@
       <button role="tab" data-tab="place" class="active">📍<span>Place</span></button>
       <button role="tab" data-tab="move">🚶<span>Move</span></button>
       <button role="tab" data-tab="tot">🎃<span>Trick or treat</span></button>
+      <button role="tab" data-tab="schedule">⏰<span>Schedule</span></button>
       <button role="tab" data-tab="saved">★<span>Saved</span></button>
       <button role="tab" data-tab="offline">⬇️<span>Offline</span></button>
     </nav>
@@ -219,6 +220,42 @@
         <button id="totStartBtn" class="primary full" disabled><span class="step">3</span> Start trick-or-treating</button>
       </section>
 
+      <!-- ============ SCHEDULE ============ -->
+      <section id="tab-schedule" class="tabpanel" hidden>
+        <details class="howto" id="how-schedule" open>
+          <summary>How it works</summary>
+          <ol>
+            <li>Press <b>New plan</b>, give it a name and a date, then add <b>steps</b>: each has a <b>clock time</b> and an <b>action</b> (start trick-or-treat, walk somewhere, run a saved route, set a location, stop, or restore real GPS).</li>
+            <li>Press <b>Save plan</b>, then switch <b>Activate</b> on. A plan never runs unless it is activated.</li>
+            <li>When the <b>real clock</b> reaches a step's time, the app does it by itself, one step after another.</li>
+            <li>The app must be <b>open</b>, the Mac <b>awake</b> and the phone <b>connected</b> at that time. The app keeps the Mac awake for you (see Phones &amp; connection → Keep Mac awake).</li>
+            <li>If it was late (the Mac slept), a step still runs up to the plan's <b>late limit</b> (default 10 min); after that it is marked <b>missed</b> instead of surprising you later.</li>
+          </ol>
+          <p class="muted"><b>Shaky</b> = GPS noise plus a natural, uneven pace for that walk only. <b>⏵ Test</b> runs a single step right now, to check it works.</p>
+        </details>
+        <p id="schedNext" class="infocard">No activated plans.</p>
+        <div class="row"><button id="newPlanBtn" class="secondary">＋ New plan</button></div>
+        <div id="planEditor" class="editor" hidden>
+          <h2 id="editorTitle">New plan</h2>
+          <input id="planName" placeholder="Plan name (e.g. Halloween night)" maxlength="80" aria-label="Plan name">
+          <div class="row opts">
+            <label>Date <input id="planDate" type="date"></label>
+            <label>Phone <select id="planDevice"></select></label>
+          </div>
+          <label>Run late steps up to (minutes) <input id="planGrace" type="number" min="0" max="720" value="10"></label>
+          <h2>Steps</h2>
+          <div id="planSteps"></div>
+          <div class="row opts">
+            <button id="addPlanStepBtn" class="secondary">＋ Add step</button>
+          </div>
+          <div class="row opts">
+            <button id="savePlanBtn" class="primary">Save plan</button>
+            <button id="cancelPlanBtn" class="secondary">Cancel</button>
+          </div>
+        </div>
+        <div id="plans"></div>
+      </section>
+
       <!-- ============ SAVED ============ -->
       <section id="tab-saved" class="tabpanel" hidden>
         <details class="howto" id="how-saved" open>
@@ -270,6 +307,7 @@
       </section>
     </div>
 
+    <p id="schedNote" class="netnote" hidden></p>
     <p id="cooldownNote" class="netnote" hidden></p>
     <footer id="now" data-state="idle">
       <div class="nowtext">
@@ -286,6 +324,6 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/app.js?v=14"></script>
+  <script src="/static/app.js?v=15"></script>
 </body>
 </html>

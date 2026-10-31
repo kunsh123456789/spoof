@@ -192,6 +192,9 @@ EXPECTED_ROUTES = {
     ("GET", "/api/routes"), ("POST", "/api/routes"), ("DELETE", "/api/routes/{route_id}"), ("POST", "/api/routes/{route_id}/start"),
     ("GET", "/api/recent"), ("DELETE", "/api/recent"),
     ("GET", "/api/search"), ("GET", "/api/favorites"), ("POST", "/api/favorites"), ("DELETE", "/api/favorites/{fav_id}"),
+    ("GET", "/api/schedules"), ("POST", "/api/schedules"), ("PUT", "/api/schedules/{plan_id}"), ("DELETE", "/api/schedules/{plan_id}"),
+    ("POST", "/api/schedules/{plan_id}/arm"), ("POST", "/api/schedules/{plan_id}/reset"),
+    ("POST", "/api/schedules/{plan_id}/steps/{step_id}/run"),
     ("GET", "/"),
 }
 

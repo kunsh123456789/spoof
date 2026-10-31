@@ -176,3 +176,40 @@ header h1 { white-space: nowrap; }
 .opts input[type="text"], .opts input:not([type]) { flex: 1; min-width: 0; }
 
 .chip { min-width: 0; flex-shrink: 1; }
+
+/* ---- Schedule tab ---- */
+#tabs button span { font-size: 11px; }
+.editor { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--accent) 4%, var(--panel)); }
+.editor h2:first-child { margin-top: 0; }
+select { width: 100%; padding: 9px 10px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 9px; margin-top: 3px; }
+.steprow { border: 1px solid var(--border); border-radius: 10px; padding: 8px; margin-bottom: 8px; background: var(--panel); }
+.steprow .stephead { display: flex; gap: 6px; align-items: center; }
+.steprow .stephead input[type="time"] { width: 112px; flex: none; }
+.steprow .stephead select { flex: 1; margin-top: 0; }
+.steprow .params { margin-top: 8px; display: grid; gap: 6px; }
+.steprow .params .row { align-items: center; }
+.steprow .found { font-size: 12.5px; color: var(--ok); margin: 0; }
+.steprow .found.bad { color: var(--danger); }
+.plan { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-top: 12px; background: var(--panel); }
+.plan.armed { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok) inset; }
+.planhead { display: flex; align-items: center; gap: 8px; }
+.planhead .planname { flex: 1; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.plan .sw { border-bottom: none; padding: 6px 0; }
+.stepline { display: grid; grid-template-columns: 64px 1fr auto; gap: 8px; padding: 7px 0; border-top: 1px solid var(--border); font-size: 13.5px; align-items: start; }
+.stepline .when { font-variant-numeric: tabular-nums; font-weight: 600; }
+.stepline .note { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.sbadge { font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--border); white-space: nowrap; }
+.sbadge[data-s="running"] { color: var(--accent); border-color: var(--accent); animation: pulse 1.2s infinite; }
+.sbadge[data-s="done"] { color: var(--ok); border-color: var(--ok); }
+.sbadge[data-s="error"] { color: var(--danger); border-color: var(--danger); }
+.sbadge[data-s="missed"], .sbadge[data-s="skipped"] { color: var(--warn); border-color: var(--warn); }
+.plan .actions { display: flex; gap: 4px; justify-content: flex-end; margin-top: 4px; }
+
+/* roomier step editor fields */
+.steprow .stephead input[type="time"] { width: 126px; padding-right: 6px; }
+.steprow .stephead select { font-size: 14px; min-width: 0; text-overflow: ellipsis; }
+.steprow .params .row > label { flex: 0 0 96px; }
+.steprow .params .row > label input { text-align: center; padding-left: 6px; padding-right: 6px; }
+.steprow .params .row > select { flex: 1; min-width: 0; }
+.steprow .params .row > button, .steprow .params .row > .secondary { flex: none; white-space: nowrap; padding: 9px 12px; }
+.steprow .params .row > input { flex: 1; min-width: 0; }

@@ -43,6 +43,7 @@ CALL_TIMEOUT_S = 12.0       # one location update; a phone that sleeps mid-call 
 PROBE_TIMEOUT_S = 20.0
 OPEN_TIMEOUT_S = 300.0      # opening a session can include mounting the disk image
 CLOSE_TIMEOUT_S = 5.0
+REALISM_KEYS = ("noise", "natural_walk", "traffic_stops")
 MEMORY_SAVE_EVERY_S = 30.0    # while a trip runs, the phone's remembered position is saved at most this often
 LIST_INFO_TTL_S = 60.0        # how long a phone's name/iOS version is reused when listing phones
 LIST_QUERY_TIMEOUT_S = 8.0
@@ -606,6 +607,7 @@ class DeviceManager:
         self._last_ok = 0.0                                    # when a device call last succeeded
         self._last_base: Optional[dict] = None                 # the last "ready"/error part of status
         self._stop_requested = False                           # asks the running trip to stop at a safe point
+        self._realism_override: dict = {}                      # switches that apply to the running trip only
         self._sim_saved = float("-inf")                        # when the position was last written to devices.json
         self._stale_notice = False                             # the position came from a previous session (app was killed)
         self._rng = rng or random.Random()
@@ -625,6 +627,9 @@ class DeviceManager:
         self._status_cache: tuple[float, dict] | None = None
 
     def _on(self, key: str) -> bool:
+        """A realism/option switch: this trip's own override if it has one, else the global setting."""
+        if key in self._realism_override:
+            return bool(self._realism_override[key])
         return bool(self.settings.get(key))
 
     def _journey_active(self) -> bool:
@@ -954,6 +959,7 @@ class DeviceManager:
         self._walk_task = None
         self._walk = {}
         self._route_points = []
+        self._realism_override = {}
         self._remember_sim(force=True)
 
     def _check_stop(self) -> None:
@@ -1049,6 +1055,7 @@ class DeviceManager:
         self._stale_notice = False
         self._remember_sim(force=True)
         self._route_points = [[lat, lon] for leg in legs for lat, lon in leg.points]
+        self._realism_override = {k: bool(v) for k, v in (plan.realism or {}).items() if k in REALISM_KEYS}
         self._walk = {
             "kind": plan.kind, "mode": plan.mode, "speed_kmh": speed, "cur_speed_kmh": speed, "loop": bool(cycle),
             "total": 1 if path else len(stops), "stop": first_target, "state": "moving", "remaining_m": 0.0,
@@ -1112,6 +1119,7 @@ class DeviceManager:
                 if leg.dwell_s:
                     await self._dwell(leg.dwell_s)
             self._walk.update(state="done", remaining_m=0.0, wait_left_s=0.0, returning=False)
+            self._realism_override = {}
             self._remember_sim(force=True)
             if self._position and self.on_finish:
                 self.on_finish(*self._position)
@@ -1180,6 +1188,7 @@ class JourneyPlan:
     speed_jitter: float = 0.0     # +/- fraction of speed, re-rolled per leg
     return_to_start: bool = False  # walk back to the starting point when finished
     path: Optional[list] = None   # an exact polyline (GPX track) to follow instead of routing between stops
+    realism: Optional[dict] = None  # per-trip overrides of the realism switches, e.g. {"noise": True, "natural_walk": True}
 
 
 @dataclass

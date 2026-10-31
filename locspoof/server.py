@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -25,6 +26,7 @@ from .offline import PNG_SIGNATURE, OfflineDownloader, OfflineStore, fetch_tile,
 from .recents import RecentsStore
 from .routes import RoutesStore
 from .routing import Router
+from .schedule import SchedulesStore, Scheduler, clean_plan
 from .settings import SettingsStore
 from .trickortreat import HouseFinder
 
@@ -60,6 +62,7 @@ class JourneyRequest(BaseModel):
     speed_jitter: float = 0.0
     return_to_start: bool = False
     path: Optional[list[list[float]]] = None   # exact GPX polyline [[lat, lon], ...]
+    realism: Optional[dict[str, bool]] = None  # switches for this trip only (noise / natural_walk / traffic_stops)
 
 
 class RouteRequest(BaseModel):
@@ -106,6 +109,17 @@ class OfflineRequest(BaseModel):
     bbox: BBoxModel
 
 
+class ScheduleRequest(BaseModel):
+    name: str
+    device: str = ""
+    grace_min: int = 10
+    steps: list[dict]
+
+
+class ArmRequest(BaseModel):
+    armed: bool
+
+
 class TrickOrTreatRequest(BaseModel):
     lat: Optional[float] = None
     lon: Optional[float] = None
@@ -127,6 +141,10 @@ def create_app(
     backend_factory=None,
     discovery: Optional[Backend] = None,
     routes_path: Optional[Path] = None,
+    schedules_path: Optional[Path] = None,
+    schedule_clock=time.time,
+    schedule_tick: float = 1.0,
+    schedule_retry: float = 15.0,
     ambient_tick: float = 2.5,
     rng=None,
     tile_client: Optional[httpx.AsyncClient] = None,
@@ -138,6 +156,7 @@ def create_app(
     recents = RecentsStore(recents_path or ROOT / "recent.json")
     settings = SettingsStore(settings_path or ROOT / "settings.json")
     routes = RoutesStore(routes_path or ROOT / "routes.json")
+    schedules = SchedulesStore(schedules_path or ROOT / "schedules.json")
     memory = DeviceMemory(devices_path or ROOT / "devices.json")
 
     def make_manager(be: Backend) -> DeviceManager:
@@ -163,7 +182,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        await scheduler.start()
         yield
+        await scheduler.stop()
         # Closing the session also ends an iOS 17+ simulation; the phones return to real GPS.
         await fleet.shutdown()
 
@@ -240,7 +261,15 @@ def create_app(
             stops = stops or [Stop(path[-1][0], path[-1][1])]
         return JourneyPlan(
             stops=stops, mode=body.mode, speed_kmh=body.speed_kmh, loop=body.loop, jump_to_first=body.jump_to_first,
-            kind=body.kind, speed_jitter=body.speed_jitter, return_to_start=body.return_to_start, path=path,
+            kind=body.kind, speed_jitter=body.speed_jitter, return_to_start=body.return_to_start, path=path, realism=body.realism,
+        )
+
+    def route_request(r: dict, jump: bool) -> JourneyRequest:
+        """A saved route as a journey request."""
+        return JourneyRequest(
+            stops=[StopModel(**{k: v for k, v in s_.items() if k in StopModel.model_fields}) for s_ in r["stops"]],
+            path=r.get("path"), mode=r["mode"], speed_kmh=r["speed_kmh"], loop=r.get("loop", False),
+            return_to_start=r.get("return_to_start", False), jump_to_first=jump,
         )
 
     async def run_journey(body: JourneyRequest, manager: DeviceManager):
@@ -271,8 +300,9 @@ def create_app(
     async def journey_stop(manager: DeviceManager = Depends(get_manager)):
         return await manager.stop_walk()
 
-    @app.post("/api/trick-or-treat/plan")
-    async def trick_or_treat_plan(body: TrickOrTreatRequest):
+    async def plan_tot(body: TrickOrTreatRequest, opts: dict) -> dict:
+        """Find houses for a trick-or-treat walk. ``opts``: realistic / kids / avoid_busy (global switches, or a
+        scheduled step's own choices)."""
         if not 3 <= body.houses <= 60:
             raise AppError("bad_count", "Number of houses must be between 3 and 60.", status=422)
         polygon = None
@@ -301,8 +331,6 @@ def create_app(
             if not 100 <= body.radius_m <= 1500:
                 raise AppError("bad_radius", "Radius must be between 100 and 1500 m.", status=422)
             lat, lon = body.lat, body.lon
-        opts = {"realistic": settings.data["tot_realistic"], "kids": settings.data["tot_kids"],
-                "avoid_busy": settings.data["tot_avoid_busy"]}
         plan = await houses.plan(lat, lon, body.radius_m, body.houses, polygon=polygon, **opts)
         kids = opts["kids"]
         return {
@@ -310,6 +338,93 @@ def create_app(
             # recommended pace for the walk: a group of kids dawdles
             "pace": {"speed_kmh": 3.2 if kids else 4.5, "speed_jitter": 0.3 if kids else 0.2},
         }
+
+    @app.post("/api/trick-or-treat/plan")
+    async def trick_or_treat_plan(body: TrickOrTreatRequest):
+        opts = {"realistic": settings.data["tot_realistic"], "kids": settings.data["tot_kids"],
+                "avoid_busy": settings.data["tot_avoid_busy"]}
+        return await plan_tot(body, opts)
+
+    # ---- timed plans ----
+    async def execute_step(plan: dict, step: dict) -> str:
+        """Do one scheduled step through the same code paths as the buttons in the UI."""
+        manager = await fleet.get(plan.get("device") or None)
+        t, p = step["type"], step["params"]
+        if t == "set_location":
+            await manager.set_location(p["lat"], p["lon"])
+            recents.add(p["lat"], p["lon"], p.get("label") or None)
+            return "Location set to " + (p.get("label") or "%.5f, %.5f" % (p["lat"], p["lon"])) + "."
+        if t == "move_to":
+            if p.get("start"):
+                await manager.set_location(p["start"]["lat"], p["start"]["lon"])
+            req = JourneyRequest(stops=[StopModel(lat=p["lat"], lon=p["lon"])], mode=p["mode"], speed_kmh=p["speed_kmh"],
+                                 realism={"noise": True, "natural_walk": True} if p.get("shaky") else None)
+            await run_journey(req, manager)
+            return "Heading to %s at %g km/h (%s%s)." % (p.get("label") or "the destination", p["speed_kmh"], p["mode"], ", shaky" if p.get("shaky") else "")
+        if t == "route":
+            r = routes.get(p["route_id"])
+            if not r:
+                raise AppError("not_found", "The saved route for this step no longer exists.", "Edit the plan and choose another route.", 404)
+            await run_journey(route_request(r, p.get("jump", True)), manager)
+            return "Route “%s” started." % r["name"]
+        if t == "trick_or_treat":
+            body = TrickOrTreatRequest(lat=p.get("lat"), lon=p.get("lon"), radius_m=p["radius_m"], houses=p["houses"], polygon=p.get("polygon"))
+            res = await plan_tot(body, {"realistic": p["realistic"], "kids": p["kids"], "avoid_busy": p["avoid_busy"]})
+            visit = [h for h in res["houses"] if not h["lights_off"]]
+            req = JourneyRequest(
+                stops=[StopModel(lat=h["lat"], lon=h["lon"], dwell_s=h["dwell_s"]) for h in visit], mode="walk",
+                speed_kmh=res["pace"]["speed_kmh"], jump_to_first=True, kind="trick_or_treat", speed_jitter=res["pace"]["speed_jitter"],
+            )
+            await run_journey(req, manager)
+            return "Trick-or-treat started: %d houses.%s" % (len(visit), (" " + " ".join(res["notes"])) if res.get("notes") else "")
+        if t == "clear":
+            await manager.clear_location()
+            return "Real GPS restored."
+        await manager.stop_walk()
+        return "Stopped moving."
+
+    scheduler = Scheduler(schedules, execute_step, clock=schedule_clock, tick_every=schedule_tick, retry_every=schedule_retry)
+    app.state.scheduler = scheduler
+
+    @app.get("/api/schedules")
+    async def list_schedules():
+        return {"plans": schedules.list(), "now": schedule_clock(), "next": scheduler.next_event()}
+
+    @app.post("/api/schedules")
+    async def create_schedule(body: ScheduleRequest):
+        return schedules.create(clean_plan(body.model_dump()))
+
+    @app.put("/api/schedules/{plan_id}")
+    async def edit_schedule(plan_id: str, body: ScheduleRequest):
+        plan = schedules.replace(plan_id, clean_plan(body.model_dump()))
+        if plan is None:
+            raise AppError("not_found", "That plan was not found.", status=404)
+        return plan
+
+    @app.delete("/api/schedules/{plan_id}")
+    async def delete_schedule(plan_id: str):
+        if not schedules.delete(plan_id):
+            raise AppError("not_found", "That plan was not found.", status=404)
+        return {"ok": True}
+
+    @app.post("/api/schedules/{plan_id}/arm")
+    async def arm_schedule(plan_id: str, body: ArmRequest):
+        plan = schedules.set_armed(plan_id, body.armed, schedule_clock())
+        if plan is None:
+            raise AppError("not_found", "That plan was not found.", status=404)
+        return plan
+
+    @app.post("/api/schedules/{plan_id}/reset")
+    async def reset_schedule(plan_id: str):
+        plan = schedules.reset(plan_id)
+        if plan is None:
+            raise AppError("not_found", "That plan was not found.", status=404)
+        return plan
+
+    @app.post("/api/schedules/{plan_id}/steps/{step_id}/run")
+    async def run_schedule_step(plan_id: str, step_id: str):
+        """Try one step right now (it does not change the plan's schedule)."""
+        return {"note": await scheduler.run_now(plan_id, step_id)}
 
     # ---- offline packs ----
     @app.get("/api/offline")
@@ -401,12 +516,7 @@ def create_app(
         if not r:
             raise AppError("not_found", "Saved route not found.", status=404)
         jump = body.jump_to_first if body.jump_to_first is not None else False
-        req = JourneyRequest(
-            stops=[StopModel(**{k: v for k, v in s_.items() if k in StopModel.model_fields}) for s_ in r["stops"]],
-            path=r.get("path"), mode=r["mode"], speed_kmh=r["speed_kmh"], loop=r.get("loop", False),
-            return_to_start=r.get("return_to_start", False), jump_to_first=jump,
-        )
-        return await run_journey(req, manager)
+        return await run_journey(route_request(r, jump), manager)
 
     @app.get("/api/recent")
     async def list_recent():
