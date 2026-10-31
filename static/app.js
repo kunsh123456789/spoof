@@ -1,6 +1,10 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   if (typeof L === "undefined") { document.body.insertAdjacentHTML("afterbegin", "<p style='padding:24px'>The map library failed to load (static/vendor/leaflet missing?).</p>"); return; }
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode etc. */ } },
+  };
   const map = L.map("map", { zoomControl: false }).setView([20, 0], 2);
   L.control.zoom({ position: "topright" }).addTo(map);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -8,8 +12,10 @@
   }).addTo(map);
 
   let pin = null, simMarker = null, status = null, busy = false, toastTimer = null, centeredOnSim = false;
-  let mode = "walk", stops = [], houses = [];
-  let routeLayer = null, routeFetched = false, stopLayer = L.layerGroup().addTo(map), houseLayer = L.layerGroup().addTo(map);
+  let mode = "walk", kind = "single", tab = "place", stops = [], houses = [], landed = false;
+  let routeLayer = null, routeFetched = false;
+  const stopLayer = L.layerGroup().addTo(map), houseLayer = L.layerGroup().addTo(map);
+  const accent = () => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0a84ff";
 
   // ---------- helpers ----------
   async function api(method, path, body) {
@@ -17,7 +23,7 @@
     try {
       res = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
     } catch (e) {
-      throw { message: "Cannot reach the local server.", hint: "Is `python app.py` still running?" };
+      throw { message: "Cannot reach the local server.", hint: "Is the app still running in Terminal?" };
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw data.error || (Array.isArray(data.detail) ? { message: "Invalid input.", hint: data.detail[0]?.msg } : { message: `Error ${res.status}` });
@@ -29,6 +35,7 @@
   }
   const fail = (e) => toast(e.hint ? `${e.message} ${e.hint}` : e.message, 7000);
   const fmt = (n) => Number(n).toFixed(6);
+  const fmt4 = (n) => Number(n).toFixed(4);
   const fmtDist = (m) => (m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`);
   const fmtSecs = (s) => (s >= 60 ? `${Math.floor(s / 60)} min ${Math.round(s % 60)} s` : `${Math.round(s)} s`);
   function li(text) { const el = document.createElement("li"); const s = document.createElement("span"); s.className = "name"; s.textContent = text; el.append(s); return el; }
@@ -43,7 +50,31 @@
   }
   const shortName = (name) => name.split(",").slice(0, 2).join(",").trim();
 
+  // ---------- tabs, theme, how-to boxes ----------
+  function showTab(name) {
+    tab = name;
+    document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    document.querySelectorAll(".tabpanel").forEach((p) => (p.hidden = p.id !== `tab-${name}`));
+    if (name === "tot") stopLayer.remove(); else stopLayer.addTo(map);     // keep manual stops out of trick-or-treat view
+    store.set("tab", name); updateTheme();
+  }
+  document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  function updateTheme() {
+    const w = status?.walk, on = tab === "tot" || (w?.active && w.kind === "trick_or_treat");
+    document.documentElement.dataset.theme = on ? "halloween" : "";
+    $("totBanner").hidden = !on;
+    if (routeLayer) routeLayer.setStyle({ color: accent() });
+  }
+  document.querySelectorAll("details.howto").forEach((d) => {          // remember which instruction boxes you closed
+    if (store.get(`how-${d.id}`) === "closed") d.open = false;
+    d.addEventListener("toggle", () => store.set(`how-${d.id}`, d.open ? "open" : "closed"));
+  });
+
   // ---------- pin ----------
+  function pinLine() {
+    const t = pin ? `📍 Pin: ${fmt4(pin.getLatLng().lat)}, ${fmt4(pin.getLatLng().lng)}` : "📍 No pin yet — click the map to drop one.";
+    document.querySelectorAll("[data-pinline]").forEach((e) => (e.textContent = t));
+  }
   function setPin(lat, lon, { pan = false } = {}) {
     if (!pin) {
       pin = L.marker([lat, lon], { draggable: true }).addTo(map);
@@ -52,10 +83,10 @@
     fillInputs(lat, lon);
     if (pan) map.setView([lat, lon], Math.max(map.getZoom(), 15));
   }
-  function fillInputs(lat, lon) { $("lat").value = fmt(lat); $("lon").value = fmt(lon); $("pinHint").textContent = "Drag the pin to fine-tune."; }
+  function fillInputs(lat, lon) { $("lat").value = fmt(lat); $("lon").value = fmt(lon); pinLine(); }
   function readInputs() {
     const lat = parseFloat($("lat").value), lon = parseFloat($("lon").value);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw { message: "Enter a valid latitude and longitude, or click the map." };
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw { message: "Drop a pin first.", hint: "Click the map, or type a latitude and longitude." };
     if (Math.abs(lat) > 90 || Math.abs(lon) > 180) throw { message: "Latitude must be within ±90 and longitude within ±180." };
     return { lat, lon };
   }
@@ -72,22 +103,27 @@
   $("setBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     const c = readInputs();
     await api("POST", "/api/location", c);
-    toast(`Location set to ${fmt(c.lat)}, ${fmt(c.lon)}`); loadRecent();
+    toast(`Location set to ${fmt4(c.lat)}, ${fmt4(c.lon)}. Check Apple Maps on the phone.`); loadRecent();
   });
   $("clearBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     await api("DELETE", "/api/location"); centeredOnSim = false; clearRoute(); toast("Simulation stopped — real GPS restored.");
   });
-  $("stopBtn").onclick = (ev) => guarded(ev.currentTarget, async () => { await api("DELETE", "/api/journey"); clearRoute(); toast("Stopped."); });
+  $("stopBtn").onclick = (ev) => guarded(ev.currentTarget, async () => { await api("DELETE", "/api/journey"); clearRoute(); toast("Stopped. The phone stays at its current spot."); });
   $("trustBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     toast("Look at your iPhone and tap Trust (enter your passcode if asked)…", 8000);
     await api("POST", "/api/trust");
   });
 
-  // path type + speed
-  document.querySelectorAll(".segbtn").forEach((b) => b.addEventListener("click", () => {
+  // path type, destination kind, speed
+  document.querySelectorAll(".segbtn[data-mode]").forEach((b) => b.addEventListener("click", () => {
     mode = b.dataset.mode;
-    document.querySelectorAll(".segbtn").forEach((x) => { x.classList.toggle("active", x === b); x.setAttribute("aria-checked", x === b); });
+    document.querySelectorAll(".segbtn[data-mode]").forEach((x) => { x.classList.toggle("active", x === b); x.setAttribute("aria-checked", x === b); });
     if (mode === "walk") setSpeed(5); else if (mode === "drive") setSpeed(50);
+  }));
+  document.querySelectorAll(".kindbtn").forEach((b) => b.addEventListener("click", () => {
+    kind = b.dataset.kind;
+    document.querySelectorAll(".kindbtn").forEach((x) => { x.classList.toggle("active", x === b); x.setAttribute("aria-checked", x === b); });
+    $("kindSingle").hidden = kind !== "single"; $("kindMulti").hidden = kind !== "multi";
   }));
   function setSpeed(v) { $("speed").value = v; $("speed").dispatchEvent(new Event("input")); $("speed").dispatchEvent(new Event("change")); }
   $("speed").addEventListener("input", () => { $("speedOut").textContent = $("speed").value; });
@@ -103,14 +139,15 @@
   }
   $("walkBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     const c = readInputs();
-    await startJourney({ stops: [c], mode, speed_kmh: Number($("speed").value) }, mode === "straight" ? "Moving in a straight line…" : `Following the ${mode === "walk" ? "walking" : "driving"} route…`);
+    await startJourney({ stops: [c], mode, speed_kmh: Number($("speed").value) },
+      mode === "straight" ? "Moving in a straight line…" : `Following the ${mode === "walk" ? "walking" : "driving"} route…`);
   });
 
   // ---------- route drawing ----------
   function drawRoute(points) {
     clearRoute(false);
     if (!points || points.length < 2) return;
-    routeLayer = L.polyline(points, { color: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0a84ff", weight: 5, opacity: 0.75, className: "route-line" }).addTo(map);
+    routeLayer = L.polyline(points, { color: accent(), weight: 5, opacity: 0.8 }).addTo(map);
     routeFetched = true;
     map.fitBounds(routeLayer.getBounds().pad(0.2), { maxZoom: 17 });
   }
@@ -119,8 +156,8 @@
   // ---------- multi-stop ----------
   function renderStops() {
     stopLayer.clearLayers();
-    $("stops").replaceChildren(...stops.map((s, i) => {
-      const el = li(`${i + 1}.  ${s.label || `${fmt(s.lat)}, ${fmt(s.lon)}`}`);
+    $("stops").replaceChildren(...(stops.length ? stops.map((s, i) => {
+      const el = li(`${i + 1}.  ${s.label || `${fmt4(s.lat)}, ${fmt4(s.lon)}`}`);
       el.append(
         miniBtn("↑", "Move up", () => { if (i) { [stops[i - 1], stops[i]] = [stops[i], stops[i - 1]]; renderStops(); } }),
         miniBtn("↓", "Move down", () => { if (i < stops.length - 1) { [stops[i + 1], stops[i]] = [stops[i], stops[i + 1]]; renderStops(); } }),
@@ -128,14 +165,17 @@
       );
       L.marker([s.lat, s.lon], { icon: L.divIcon({ className: "", html: `<div class="num-marker">${i + 1}</div>`, iconSize: [24, 24] }), interactive: false }).addTo(stopLayer);
       return el;
-    }));
+    }) : [li("No stops yet.")]));
     if (stops.length >= 2) L.polyline(stops.map((s) => [s.lat, s.lon]), { color: "#888", weight: 2, dashArray: "4 6", interactive: false }).addTo(stopLayer);
   }
-  function addStop(lat, lon, label) { if (stops.length >= 59) return toast("That's the maximum number of stops."); stops.push({ lat, lon, label }); $("routeBox").open = true; renderStops(); }
+  function addStop(lat, lon, label) {
+    if (stops.length >= 59) return toast("That's the maximum number of stops.");
+    stops.push({ lat, lon, label }); renderStops(); toast(`Stop ${stops.length} added — see the Move tab.`);
+  }
   $("addStopBtn").onclick = () => { try { const c = readInputs(); addStop(c.lat, c.lon); } catch (e) { fail(e); } };
   $("clearStopsBtn").onclick = () => { stops = []; renderStops(); };
   $("routeBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
-    if (!stops.length) throw { message: "Add at least one stop first." };
+    if (!stops.length) throw { message: "Add at least one stop first.", hint: "Drop a pin, then press “Add pin as stop”." };
     const dwell = Math.max(0, Number($("dwell").value) || 0);
     await startJourney({
       stops: stops.map((s) => ({ lat: s.lat, lon: s.lon, dwell_s: dwell })), mode, speed_kmh: Number($("speed").value), loop: $("loop").checked,
@@ -144,36 +184,30 @@
 
   // ---------- trick or treat ----------
   const TOT_SPEED = 4.5;
-  function setTheme(on) { document.documentElement.dataset.theme = on ? "halloween" : ""; $("title").textContent = "iPhone Location"; }
-  $("totOn").addEventListener("change", () => {
-    const on = $("totOn").checked; $("totBody").hidden = !on; setTheme(on);
-    if (on) $("totBox").open = true; else clearHouses();
-    if (routeLayer) routeLayer.setStyle({ color: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() });
-  });
   $("radius").addEventListener("input", () => ($("radiusOut").textContent = $("radius").value));
   $("houses").addEventListener("input", () => ($("housesOut").textContent = $("houses").value));
-  function clearHouses() { houses = []; houseLayer.clearLayers(); $("totInfo").textContent = ""; $("totStartBtn").disabled = true; }
+  function clearHouses() { houses = []; houseLayer.clearLayers(); $("totInfo").hidden = true; $("totStartBtn").disabled = true; }
   $("findBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     const c = readInputs(); clearHouses();
-    $("totInfo").textContent = "Looking for houses…";
+    $("totInfo").hidden = false; $("totInfo").textContent = "Looking for houses on OpenStreetMap…";
     try {
       const res = await api("POST", "/api/trick-or-treat/plan", { ...c, radius_m: Number($("radius").value), houses: Number($("houses").value) });
       houses = res.houses;
-    } catch (e) { $("totInfo").textContent = ""; throw e; }
+    } catch (e) { $("totInfo").hidden = true; throw e; }
     houses.forEach((h, i) => L.marker([h.lat, h.lon], { icon: L.divIcon({ className: "", html: `<div class="pumpkin">🎃</div>`, iconSize: [22, 22] }), title: `House ${i + 1}`, interactive: false }).addTo(houseLayer));
     L.polyline(houses.map((h) => [h.lat, h.lon]), { color: "#ff7a00", weight: 2, dashArray: "3 6", interactive: false }).addTo(houseLayer);
     map.fitBounds(L.latLngBounds(houses.map((h) => [h.lat, h.lon])).pad(0.25), { maxZoom: 18 });
     let dist = 0; for (let i = 1; i < houses.length; i++) dist += haversine([houses[i - 1].lat, houses[i - 1].lon], [houses[i].lat, houses[i].lon]);
     const secs = dist / (TOT_SPEED / 3.6) * 1.3 + houses.reduce((a, h) => a + h.dwell_s, 0);
-    $("totInfo").textContent = `${houses.length} houses · about ${fmtDist(dist)} of walking · roughly ${Math.round(secs / 60)} min.`;
+    $("totInfo").textContent = `🎃 ${houses.length} houses · about ${fmtDist(dist)} of walking · roughly ${Math.round(secs / 60)} min. Press “2 · Start” when ready.`;
     $("totStartBtn").disabled = false;
   });
   $("totStartBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
-    if (!houses.length) throw { message: "Find houses first." };
+    if (!houses.length) throw { message: "Find houses first.", hint: "Press “1 · Find houses”." };
     await startJourney({
       stops: houses.map((h) => ({ lat: h.lat, lon: h.lon, dwell_s: h.dwell_s })), mode: "walk", speed_kmh: TOT_SPEED,
       jump_to_first: true, kind: "trick_or_treat", speed_jitter: 0.2,
-    }, "Happy Halloween! 🎃 Heading out…");
+    }, "Happy Halloween! 🎃 Heading to the first house…");
   });
 
   // ---------- search ----------
@@ -195,12 +229,12 @@
 
   // ---------- favorites & recent ----------
   async function saveFavorite(name, where) {
-    try { await api("POST", "/api/favorites", { name, ...where }); loadFavs(); toast(`Saved “${name}”.`); } catch (e) { fail(e); }
+    try { await api("POST", "/api/favorites", { name, ...where }); loadFavs(); toast(`Saved “${name}” to Favorites.`); } catch (e) { fail(e); }
   }
   function rows(list, { star }) {
     return list.map((f) => {
       const el = li(f.name); el.title = `${fmt(f.lat)}, ${fmt(f.lon)}`;
-      el.onclick = () => setPin(f.lat, f.lon, { pan: true });
+      el.onclick = () => { setPin(f.lat, f.lon, { pan: true }); toast("Pin moved. Go to the Place tab and press Set location."); };
       el.append(miniBtn("＋", "Add as a stop", () => addStop(f.lat, f.lon, f.name)));
       if (star) el.append(miniBtn("★", "Save to favorites", () => saveFavorite(f.name, { lat: f.lat, lon: f.lon })));
       else el.append(miniBtn("✕", `Delete ${f.name}`, async () => { try { await api("DELETE", `/api/favorites/${f.id}`); loadFavs(); } catch (x) { fail(x); } }));
@@ -220,8 +254,8 @@
       const name = $("favName").value.trim();
       if (!name) throw { message: "Type a name for this favorite." };
       const where = $("favWhere").value.trim();
-      let loc;
       const m = where.match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/);
+      let loc;
       if (!where) loc = readInputs();                          // blank -> the current pin
       else if (m) loc = { lat: parseFloat(m[1]), lon: parseFloat(m[2]) };
       else loc = { query: where };                             // a place name, looked up on the server
@@ -230,14 +264,23 @@
     } catch (e) { fail(e); }
   });
 
-  // ---------- status polling ----------
-  function walkText(w) {
-    if (w.error) return `Stopped: ${w.error.message}`;
-    const tot = w.kind === "trick_or_treat", label = tot ? "House" : "Stop", icon = tot ? "🎃 " : "";
-    const where = w.total > 1 ? `${label} ${w.stop}/${w.total}` : "";
-    if (w.active && w.state === "waiting") return `${icon}${tot ? "At the door" : "Paused"}${where ? ` (${where})` : ""} — moving on in ${fmtSecs(w.wait_left_s)}`;
-    if (w.active) return `${icon}${tot ? "Walking" : "Moving"} at ${w.speed_kmh.toFixed(1)} km/h${where ? ` → ${where}` : ""} — ${fmtDist(w.remaining_m)} to go${w.loop ? " · looping" : ""}`;
-    return w.state === "done" ? "Finished." : "";
+  // ---------- status polling + bottom bar ----------
+  function nowBar(s) {
+    const w = s.walk || {}, sim = s.simulation, tot = w.kind === "trick_or_treat";
+    const where = w.total > 1 ? ` ${w.stop}/${w.total}` : "";
+    let state = "idle", title = "Real GPS", detail = "Your phone is using its real location.";
+    if (w.error) { state = "simulating"; title = "Stopped"; detail = w.error.message + (w.error.hint ? ` ${w.error.hint}` : ""); }
+    else if (w.active && w.state === "waiting") {
+      state = "moving"; title = tot ? `🎃 At the door — house${where}` : `Paused at stop${where}`; detail = `Moving on in ${fmtSecs(w.wait_left_s)}.`;
+    } else if (w.active) {
+      state = "moving"; title = tot ? `🎃 Walking to house${where}` : `Moving${where ? ` to stop${where}` : ""}`;
+      detail = `${w.speed_kmh.toFixed(1)} km/h · ${fmtDist(w.remaining_m)} to go${w.loop ? " · looping" : ""}`;
+    } else if (sim.active) {
+      state = "simulating"; title = w.state === "done" ? "Finished — simulating" : "Simulating";
+      detail = `${fmt4(sim.lat)}, ${fmt4(sim.lon)}`;
+    }
+    $("now").dataset.state = state; $("nowTitle").textContent = title; $("nowDetail").textContent = detail;
+    $("stopBtn").hidden = !w.active; $("clearBtn").hidden = !sim.active;
   }
   function render(s) {
     status = s;
@@ -252,16 +295,16 @@
       $("trustBtn").hidden = s.state !== "not_trusted"; banner.hidden = false;
     }
     const sim = s.simulation;
-    $("simState").textContent = sim.active ? `Simulating ${fmt(sim.lat)}, ${fmt(sim.lon)}` : "Not simulating — phone uses its real GPS.";
     if (sim.active) {
       const icon = L.divIcon({ className: "", html: '<div class="sim-marker"></div>', iconSize: [18, 18] });
       if (!simMarker) simMarker = L.marker([sim.lat, sim.lon], { icon, interactive: false, zIndexOffset: -100 }).addTo(map);
       else simMarker.setLatLng([sim.lat, sim.lon]);
       if (!centeredOnSim) { centeredOnSim = true; if (!pin) map.setView([sim.lat, sim.lon], 13); }
     } else if (simMarker) { simMarker.remove(); simMarker = null; }
+    nowBar(s);
     const w = s.walk || {};
-    $("walkState").textContent = walkText(w);
-    if (w.active && w.kind === "trick_or_treat" && !$("totOn").checked) { $("totOn").checked = true; $("totOn").dispatchEvent(new Event("change")); }
+    if (!landed) { landed = true; if (w.active && w.kind === "trick_or_treat") showTab("tot"); }   // reopened mid-trip: land on the right tab, once
+    updateTheme();
     if (!w.active) clearRoute();
     else if (!routeFetched) { routeFetched = true; api("GET", "/api/journey/route").then((r) => { if (!routeLayer && r.route.length) drawRoute(r.route); }).catch(() => {}); }
   }
@@ -270,5 +313,7 @@
     catch (e) { render({ state: "server_down", error: e, device: null, simulation: { active: false }, walk: {} }); }
   }
   (function loop() { refresh().finally(() => setTimeout(loop, status?.walk?.active ? 1000 : 3000)); })();
-  loadFavs(); loadRecent(); renderStops();
+
+  showTab(["place", "move", "tot", "saved"].includes(store.get("tab")) ? store.get("tab") : "place");
+  pinLine(); loadFavs(); loadRecent(); renderStops();
 })();

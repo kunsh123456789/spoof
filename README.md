@@ -89,23 +89,22 @@ Leave it running; the app picks it up on the next click. Force a mode with `pyth
 
 ## Using it
 
-* **Click** the map to drop a pin (drag it to fine-tune), or type lat/lon, or **search** (e.g. "Eiffel Tower").
-* **Set Location** sends the pin to the phone. **Clear / Restore Real** stops simulating.
-* **Move gradually**: choose **Straight line**, **Walking path** or **Driving path**, set the speed, and press
-  **Move to pin**. Walking/driving paths follow real roads or footpaths from OpenStreetMap data and are drawn on the map.
-  Changing the speed while moving takes effect immediately; **Stop here** halts where you are.
-  You must **Set Location** once first so there is a starting point.
-* **Multi-stop route**: add several stops (**Add pin as stop**, or the **＋** button on search results, favorites and
-  recents), reorder with the arrows, optionally set a pause at each stop and **Loop**, then **Start route**. It uses the
-  path type and speed from the section above.
-* **Trick or treat 🎃**: switch on trick-or-treat mode (the app turns orange), put the pin on a residential street,
-  and press **Find houses near pin**. It looks up houses around the pin on OpenStreetMap, builds a house-to-house tour
-  (nearest neighbour first) with random 20-120 s pauses at each door, and shows it as pumpkins. **Start trick-or-treating**
-  jumps to the first house, then walks street to street at about 4.5 km/h (with natural speed variation). Use
-  **Stop here** to end it. Radius and number of houses are adjustable.
-* **Favorites**: type a name and either leave "Place or lat, lon" blank (saves the current pin), type a place name
-  (looked up for you) or paste coordinates like `48.8584, 2.2945`. You can also press **★** on a search result or recent.
-* **Recent** remembers your last 15 locations (each Set Location and finished route). Click one to jump there.
+The panel has four tabs, and each one has a **How it works** box (close it once you know the steps; the app remembers).
+The bar at the bottom always shows what the phone is doing, with **Stop moving** and **Restore real GPS** buttons.
+
+* **📍 Place**: click the map or search to drop a pin (drag it to fine-tune), then **Set location**.
+* **🚶 Move**: pick **Straight line**, **Walking** or **Driving** (the last two follow real roads from OpenStreetMap and are
+  drawn on the map), set the speed (changeable while moving) and either go to **one destination** (the pin) or build a
+  **multi-stop route**: move the pin, press **Add pin as stop**, repeat; reorder with the arrows; optionally set a pause at
+  each stop and **Loop**. You must set a starting location first.
+* **🎃 Trick or treat**: while this tab is open (and while a trick-or-treat walk is running) the app turns orange and shows a
+  "Trick-or-treat mode" banner. Put the pin on a residential street, press **1 · Find houses** (pumpkins appear: real houses
+  from OpenStreetMap, ordered into a house-to-house tour), then **2 · Start**. The phone jumps to the first house, walks
+  street to street at about 4.5 km/h with natural speed variation, and pauses 20-120 s at every door. Radius and number of
+  houses are adjustable. **Stop moving** ends it, leaving the phone where it is.
+* **★ Saved**: **Favorites** take a name plus a place name, coordinates like `48.8584, 2.2945`, or nothing (saves the
+  current pin). Click one to move the pin there, **＋** adds it as a stop. **Recent** keeps your last 15 locations (each Set
+  location and finished route); **★** promotes one to a favorite.
 * Files `favorites.json` and `recent.json` live next to `app.py` and are ignored by git.
 
 Notes on the online services: place search (Nominatim), road routing (the free OSM-community OSRM servers at

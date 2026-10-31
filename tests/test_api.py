@@ -161,5 +161,7 @@ def test_search_offline_and_429():
 
 def test_index_and_static_served(make_client, backend):
     with make_client(backend) as c:
-        assert "leaflet" in c.get("/").text.lower()
-        assert c.get("/static/app.js").status_code == 200
+        page = c.get("/")
+        assert "leaflet" in page.text.lower() and page.headers["cache-control"] == "no-cache"
+        js = c.get("/static/app.js")
+        assert js.status_code == 200 and js.headers["cache-control"] == "no-cache"

@@ -5,14 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>iPhone Location Simulator</title>
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
   <div id="map" aria-label="Map"></div>
+  <div id="vignette"></div>
+  <div id="totBanner" hidden>🎃 Trick-or-treat mode</div>
 
   <aside id="panel">
     <header>
-      <h1 id="title">iPhone Location</h1>
+      <h1>iPhone Location</h1>
       <div id="device" class="chip" data-state="loading"><span class="dot"></span><span id="deviceText">Checking…</span></div>
     </header>
 
@@ -22,108 +24,151 @@
       <button id="trustBtn" class="secondary" hidden>Trust this computer</button>
     </div>
 
-    <form id="searchForm" role="search">
-      <input id="searchInput" type="search" placeholder="Search a place or address…" autocomplete="off" aria-label="Search places">
-      <button type="submit" class="secondary">Search</button>
-    </form>
-    <ul id="results" class="list" hidden></ul>
+    <nav id="tabs" role="tablist">
+      <button role="tab" data-tab="place" class="active">📍<span>Place</span></button>
+      <button role="tab" data-tab="move">🚶<span>Move</span></button>
+      <button role="tab" data-tab="tot">🎃<span>Trick or treat</span></button>
+      <button role="tab" data-tab="saved">★<span>Saved</span></button>
+    </nav>
 
-    <section>
-      <h2>Coordinates</h2>
-      <div class="row">
-        <label>Lat <input id="lat" inputmode="decimal" placeholder="48.858370"></label>
-        <label>Lon <input id="lon" inputmode="decimal" placeholder="2.294481"></label>
-      </div>
-      <p class="muted" id="pinHint">Click the map to drop a pin.</p>
-      <div class="row">
-        <button id="setBtn" class="primary">Set Location</button>
-        <button id="clearBtn" class="danger">Clear / Restore Real</button>
-      </div>
-      <p id="simState" class="muted">Not simulating — phone uses its real GPS.</p>
-    </section>
-
-    <section>
-      <h2>Move gradually</h2>
-      <div class="seg" role="radiogroup" aria-label="Path type">
-        <button class="segbtn" data-mode="straight" role="radio">Straight line</button>
-        <button class="segbtn active" data-mode="walk" role="radio">Walking path</button>
-        <button class="segbtn" data-mode="drive" role="radio">Driving path</button>
-      </div>
-      <label class="speed">Speed <output id="speedOut">5</output> km/h
-        <input id="speed" type="range" min="1" max="120" step="1" value="5">
-      </label>
-      <div class="presets">
-        <button class="chipbtn" data-speed="5">Walk 5</button>
-        <button class="chipbtn" data-speed="15">Bike 15</button>
-        <button class="chipbtn" data-speed="50">Drive 50</button>
-      </div>
-      <div class="row">
-        <button id="walkBtn" class="secondary">Move to pin</button>
-        <button id="stopBtn" class="secondary">Stop here</button>
-      </div>
-      <p id="walkState" class="muted"></p>
-    </section>
-
-    <section>
-      <details id="routeBox">
-        <summary>Multi-stop route</summary>
-        <p class="muted">Add several stops; the phone visits them in order using the path type and speed above.</p>
+    <div class="body">
+      <!-- ============ PLACE ============ -->
+      <section id="tab-place" class="tabpanel">
+        <details class="howto" id="how-place" open>
+          <summary>How it works</summary>
+          <ol>
+            <li>Click the map (or search below) to drop a pin. Drag the pin to fine-tune.</li>
+            <li>Press <b>Set location</b>. Your iPhone now thinks it is there — check in Apple Maps.</li>
+            <li>Press <b>Restore real GPS</b> (bottom bar) when you are done.</li>
+          </ol>
+        </details>
+        <form id="searchForm" role="search" class="inline">
+          <input id="searchInput" type="search" placeholder="Search a place or address…" autocomplete="off" aria-label="Search places">
+          <button type="submit" class="secondary">Search</button>
+        </form>
+        <ul id="results" class="list" hidden></ul>
+        <h2>Pin coordinates</h2>
         <div class="row">
-          <button id="addStopBtn" class="secondary">Add pin as stop</button>
-          <button id="clearStopsBtn" class="secondary">Clear stops</button>
+          <label>Latitude <input id="lat" inputmode="decimal" placeholder="48.858370"></label>
+          <label>Longitude <input id="lon" inputmode="decimal" placeholder="2.294481"></label>
         </div>
-        <ol id="stops" class="list stops"></ol>
-        <div class="row opts">
-          <label>Pause at each stop (s) <input id="dwell" type="number" min="0" max="900" value="0"></label>
-          <label class="check"><input id="loop" type="checkbox"> Loop</label>
-        </div>
-        <button id="routeBtn" class="primary full">Start route</button>
-      </details>
-    </section>
+        <button id="setBtn" class="primary full">Set location</button>
+      </section>
 
-    <section id="totSection">
-      <details id="totBox">
-        <summary>🎃 Trick or treat</summary>
-        <label class="check switch"><input id="totOn" type="checkbox"> Trick-or-treat mode (orange theme)</label>
-        <div id="totBody" hidden>
-          <p class="muted">Finds houses around the pin on OpenStreetMap and visits them one by one on foot, pausing at each door.</p>
-          <label class="speed">Search radius <output id="radiusOut">350</output> m
-            <input id="radius" type="range" min="150" max="900" step="50" value="350">
-          </label>
-          <label class="speed">Houses <output id="housesOut">20</output>
-            <input id="houses" type="range" min="5" max="40" step="1" value="20">
-          </label>
+      <!-- ============ MOVE ============ -->
+      <section id="tab-move" class="tabpanel" hidden>
+        <details class="howto" id="how-move" open>
+          <summary>How it works</summary>
+          <ol>
+            <li>First <b>set a starting location</b> in the Place tab.</li>
+            <li>Choose a <b>path type</b>: <i>Straight line</i> goes directly; <i>Walking</i> / <i>Driving</i> follow real roads.</li>
+            <li>Choose a <b>speed</b>, then either go to <b>one destination</b> (the pin) or build a <b>multi-stop route</b>.</li>
+            <li>You can change the speed while moving. Use <b>Stop moving</b> in the bottom bar to halt.</li>
+          </ol>
+        </details>
+        <h2>Path type</h2>
+        <div class="seg" role="radiogroup" aria-label="Path type">
+          <button class="segbtn" data-mode="straight" role="radio">Straight line</button>
+          <button class="segbtn active" data-mode="walk" role="radio">Walking</button>
+          <button class="segbtn" data-mode="drive" role="radio">Driving</button>
+        </div>
+        <label class="slider">Speed: <b><output id="speedOut">5</output> km/h</b>
+          <input id="speed" type="range" min="1" max="120" step="1" value="5">
+        </label>
+        <div class="presets">
+          <button class="chipbtn" data-speed="5">Walk 5</button>
+          <button class="chipbtn" data-speed="15">Bike 15</button>
+          <button class="chipbtn" data-speed="50">Drive 50</button>
+          <button class="chipbtn" data-speed="90">Highway 90</button>
+        </div>
+
+        <h2>Destination</h2>
+        <div class="seg" role="radiogroup" aria-label="Destination type">
+          <button class="segbtn kindbtn active" data-kind="single" role="radio">One destination</button>
+          <button class="segbtn kindbtn" data-kind="multi" role="radio">Multi-stop route</button>
+        </div>
+        <div id="kindSingle">
+          <p class="pinline" data-pinline></p>
+          <button id="walkBtn" class="primary full">Move to pin</button>
+        </div>
+        <div id="kindMulti" hidden>
+          <p class="muted">Move the pin, press <b>Add pin as stop</b>, repeat. Stops are visited in order.</p>
           <div class="row">
-            <button id="findBtn" class="secondary">Find houses near pin</button>
+            <button id="addStopBtn" class="secondary">Add pin as stop</button>
+            <button id="clearStopsBtn" class="secondary">Clear stops</button>
           </div>
-          <p id="totInfo" class="muted"></p>
-          <button id="totStartBtn" class="primary full" disabled>Start trick-or-treating</button>
-          <p class="muted">Starts at the first house (the phone jumps there), then walks street to street at a natural pace with random pauses.</p>
+          <ol id="stops" class="list stops"></ol>
+          <div class="row opts">
+            <label>Pause at each stop (seconds) <input id="dwell" type="number" min="0" max="900" value="0"></label>
+            <label class="check"><input id="loop" type="checkbox"> Loop</label>
+          </div>
+          <button id="routeBtn" class="primary full">Start route</button>
         </div>
-      </details>
-    </section>
+      </section>
 
-    <section>
-      <h2>Favorites</h2>
-      <form id="favForm">
-        <div class="row">
-          <input id="favName" placeholder="Name" maxlength="80" aria-label="Favorite name">
-          <button type="submit" class="secondary">Save</button>
-        </div>
-        <input id="favWhere" placeholder="Place or lat, lon (blank = current pin)" aria-label="Favorite location" class="gap">
-      </form>
-      <ul id="favs" class="list"></ul>
-    </section>
+      <!-- ============ TRICK OR TREAT ============ -->
+      <section id="tab-tot" class="tabpanel" hidden>
+        <details class="howto" id="how-tot" open>
+          <summary>How it works</summary>
+          <ol>
+            <li><b>Pick a neighborhood:</b> click the map on a residential street (or search for one in the Place tab).</li>
+            <li>Press <b>1 · Find houses</b>. 🎃 pumpkins appear on the map — real houses from OpenStreetMap, ordered into a house-to-house tour.</li>
+            <li>Press <b>2 · Start</b>. The phone jumps to the first house, then walks street to street at a natural pace and <b>pauses 20–120 s at every door</b>, like a real trick-or-treater.</li>
+            <li>Watch progress in the bottom bar. Press <b>Stop moving</b> to end early — the phone stays where it is.</li>
+          </ol>
+          <p class="muted">While this tab is open the app turns orange so you know trick-or-treat mode is active.</p>
+        </details>
+        <p class="pinline" data-pinline></p>
+        <label class="slider">Search radius: <b><output id="radiusOut">350</output> m</b>
+          <input id="radius" type="range" min="150" max="900" step="50" value="350">
+        </label>
+        <label class="slider">Number of houses: <b><output id="housesOut">20</output></b>
+          <input id="houses" type="range" min="5" max="40" step="1" value="20">
+        </label>
+        <button id="findBtn" class="secondary full"><span class="step">1</span> Find houses</button>
+        <p id="totInfo" class="infocard" hidden></p>
+        <button id="totStartBtn" class="primary full" disabled><span class="step">2</span> Start trick-or-treating</button>
+      </section>
 
-    <section>
-      <h2>Recent <button id="clearRecent" class="linkbtn">clear</button></h2>
-      <ul id="recent" class="list"></ul>
-    </section>
+      <!-- ============ SAVED ============ -->
+      <section id="tab-saved" class="tabpanel" hidden>
+        <details class="howto" id="how-saved" open>
+          <summary>How it works</summary>
+          <ol>
+            <li><b>Favorites:</b> type a name, then a place name, coordinates like <code>48.8584, 2.2945</code>, or leave blank to save the current pin.</li>
+            <li>Click any saved place to put the pin there. <b>＋</b> adds it as a stop in the Move tab.</li>
+            <li><b>Recent</b> remembers your last 15 locations automatically. Press <b>★</b> to promote one to a favorite.</li>
+          </ol>
+        </details>
+        <h2>Favorites</h2>
+        <form id="favForm">
+          <div class="row">
+            <input id="favName" placeholder="Name" maxlength="80" aria-label="Favorite name">
+            <button type="submit" class="secondary">Save</button>
+          </div>
+          <input id="favWhere" placeholder="Place or lat, lon (blank = current pin)" aria-label="Favorite location" class="gap">
+        </form>
+        <ul id="favs" class="list"></ul>
+        <h2>Recent <button id="clearRecent" class="linkbtn">clear</button></h2>
+        <ul id="recent" class="list"></ul>
+      </section>
+    </div>
+
+    <footer id="now" data-state="idle">
+      <div class="nowtext">
+        <strong id="nowTitle">Real GPS</strong>
+        <span id="nowDetail">Your phone is using its real location.</span>
+      </div>
+      <div class="nowbtns">
+        <button id="stopBtn" class="secondary" hidden>Stop moving</button>
+        <button id="clearBtn" class="danger" hidden>Restore real GPS</button>
+      </div>
+    </footer>
   </aside>
 
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>

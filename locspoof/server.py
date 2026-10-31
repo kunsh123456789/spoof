@@ -93,6 +93,14 @@ def create_app(
     app = FastAPI(title="iPhone Location Simulator", lifespan=lifespan)
     app.state.manager = manager
 
+    @app.middleware("http")
+    async def no_cache(request: Request, call_next):
+        # The UI files change between versions; never let the browser show a stale copy.
+        resp = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static"):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
     @app.exception_handler(AppError)
     async def app_error_handler(_: Request, exc: AppError):
         log.warning("%s: %s", exc.code, exc.message)
