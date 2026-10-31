@@ -914,7 +914,7 @@ class DeviceManager:
 
     # -- public operations ------------------------------------------------------------------
 
-    async def set_location(self, lat: float, lon: float, label: Optional[str] = None) -> dict:
+    async def set_location(self, lat: float, lon: float, label: Optional[str] = None, quiet: bool = False) -> dict:
         validate_coords(lat, lon)
         await self._stop_journey()
         prev = self._position
@@ -927,7 +927,8 @@ class DeviceManager:
         self._position_label, self._position_since = (label or None), time.time()
         self._remember_sim(force=True)
         self._ensure_ambient()
-        self._note("Location set to %s" % (label or "%.5f, %.5f" % (lat, lon)), kind="location")
+        if not quiet:                                         # (the phone's joystick moves once a second: no log line each time)
+            self._note("Location set to %s" % (label or "%.5f, %.5f" % (lat, lon)), kind="location")
         log.info("location set to %.6f, %.6f", lat, lon)
         self._status_cache = None
         return self._sim_state()

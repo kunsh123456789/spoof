@@ -18,6 +18,7 @@ DEFAULTS: dict[str, bool] = {
     "natural_walk": False,   # varying pace, easing at corners
     "traffic_stops": False,  # random stops at junctions on driving routes
     "cooldown_hint": False,  # show a "wait this long after a big jump" timer
+    "remote_enabled": False,  # let a paired phone on the same Wi-Fi control this app (opens a second, protected listener)
     "snap_pin": True,        # a dropped pin moves to the nearest road / path that makes sense
     "california_only": True,  # the map (and search) is limited to California
     # trick or treat
@@ -39,6 +40,7 @@ NUMBERS: dict[str, tuple[float, float, float]] = {
     "junction_max_s": (35.0, 1.0, 300.0),
     "tot_dwell_min_s": (20.0, 0.0, 600.0), # time at each house while trick-or-treating: random between min and max
     "tot_dwell_max_s": (70.0, 0.0, 600.0),
+    "remote_port": (8787.0, 1024.0, 65535.0),   # the port the phone remote listens on
 }
 PAIRS = (("junction_min_s", "junction_max_s"), ("tot_dwell_min_s", "tot_dwell_max_s"))
 

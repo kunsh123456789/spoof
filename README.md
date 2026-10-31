@@ -58,6 +58,28 @@ This creates `~/Applications/iPhone Location.app` (with its own icon, no Termina
 * `python app.py` (browser only, no window toolkit needed) still works.
 * **Updating the app**: the app *is* this folder, so there is nothing to reinstall. Quit it (Cmd+Q; if the window is closed it may still be running, so check the Dock), run `git pull` in the project folder, then open the app again. Re-run `./make_app.sh` only if you moved the folder or want a new icon. If `requirements.txt` changed, also run `source .venv/bin/activate && pip install -r requirements.txt` first. A change you don't see usually means the old copy was still running.
 
+## Phone remote (control it from your iPhone)
+
+Use your iPhone as a remote control for the Mac app: a map, place search, favorites, a **joystick**, trips, saved routes and a big **🚨 panic** button.
+It talks to the app on the Mac over your **home Wi-Fi** (both devices on the same network).
+
+1. On the Mac: **⚙ Settings → Phone remote → Control this app from my iPhone**. macOS may ask *"Do you want the application python to accept
+   incoming network connections?"*: choose **Allow**. Two addresses appear, for example `http://yourmac.local:8787/remote`.
+2. On the iPhone open **Safari** and type that address (the `.local` one keeps working if the Mac's IP changes).
+3. On the Mac press **New pairing code**, and type the 6 digits on the iPhone. This is done once per phone.
+4. In Safari: **Share → Add to Home Screen**. You now have an app icon that opens the remote full-screen.
+
+The remote has three tabs: **Pad** (drag the stick to walk in any direction; further = faster, with a top-speed slider; Stop / Back to start / Real GPS),
+**Places** (search, tap the map, favorites, recents, **Set location here**) and **Trip** (walk, drive or straight line to the pin; run saved routes).
+If several iPhones are connected there is a phone picker at the top. The top bar always shows what the iPhone is doing and how far along a trip is.
+
+**Safety:** it is **off by default**. The normal app stays reachable from this Mac only; switching the remote on opens a *second* port (8787) on
+your network. Without pairing, a device can only load the remote page. Pairing needs the 6-digit code shown on the Mac (valid 10 minutes, one use, locked
+after 5 wrong tries). A paired phone can only control the location: it can never change settings, download maps, edit plans or manage other phones
+(those work only on the Mac). The Mac keeps just a hash of each phone's key; **✕** next to a paired phone in Settings cuts it off at once. There is no
+encryption on the home Wi-Fi (plain `http`), so only use it on a network you trust, and switch it off when you do not need it.
+The Mac must be awake and the app open; the iPhone being controlled can be the same phone you are holding.
+
 ## One-time iPhone setup
 
 1. **Connect** the iPhone to the computer with a USB cable (a data cable, not charge-only). Unlock it.
@@ -316,6 +338,8 @@ locspoof/offline.py    offline packs: tiles + houses + streets, local A* router,
 locspoof/realism.py    GPS noise, natural pace, traffic stops, jump cooldown
 locspoof/settings.py   the on/off switches and adjustable times (settings.json)
 locspoof/panic.py      the panic location
+locspoof/remote.py     phone remote: pairing, token guard, second listener
+static/remote.*        the phone's remote-control page
 locspoof/gpx.py        GPX import
 locspoof/routes.py     saved routes
 locspoof/busy.py       busy-road geometry for trick-or-treat

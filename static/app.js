@@ -218,6 +218,7 @@
     const key = cb.dataset.setting;
     try {
       settings = await api("PATCH", "/api/settings", { [key]: cb.checked });
+      if (key === "remote_enabled") loadRemote();
       if (key === "california_only") { applyCalifornia(); toast(cb.checked ? "The map is now limited to California." : "The whole world is available again."); }
       if (SETTING_NEEDS_REPLAN.has(key) && houses.length) { clearHouses(); toast("Option changed — press “Find houses” again to apply it."); }
     } catch (e) { cb.checked = !cb.checked; fail(e); }
@@ -1184,6 +1185,21 @@
   $("paletteBtn").onclick = () => openPop("palette");
   $("openSetup").onclick = () => { closePop("settings"); store.set("setup.hidden", ""); showTab("place"); renderSetup(true); };
   $("resetUi").onclick = () => { ["mode", "accent", "seasonal", "fun", "layer", "collapsed", "panelw"].forEach((k) => store.set(`ui.${k}`, "")); Object.assign(ui, { mode: "auto", accent: "blue", seasonal: true, fun: true }); document.documentElement.style.removeProperty("--panel-w"); showLayer("street"); toast("Look reset."); };
+
+  // ---------- phone remote (shown inside Settings) ----------
+  let remoteTimer = null;
+  async function loadRemote() {
+    let r; try { r = await api("GET", "/api/remote"); } catch { return; }
+    $("remoteBox").hidden = !r.enabled;
+    if (!r.enabled) return;
+    $("remoteErr").hidden = !(r.error || !r.running);
+    $("remoteErr").textContent = r.error ? `⚠️ ${r.error}` : !r.running ? "Starting…" : "";
+    $("remoteUrls").replaceChildren(...(r.urls.length ? r.urls.map((u) => { const el = li(u); el.querySelector(".name").classList.add("mono"); el.title = "Click to copy"; el.onclick = () => { navigator.clipboard?.writeText(u); toast("Address copied."); }; return el; }) : [li("Could not find this Mac's Wi-Fi address. Is it on Wi-Fi?")]));
+    $("remoteCode").textContent = r.code ? `${r.code.code}  ·  ${Math.max(1, Math.round(r.code.expires_in / 60))} min` : "";
+    $("remoteDevices").replaceChildren(...(r.devices.length ? r.devices.map((d) => li(`${d.name}${d.last_seen ? " · seen " + new Date(d.last_seen * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}`)).map((el, i) => (el.append(miniBtn("✕", `Forget ${r.devices[i].name}`, async () => { if (!confirm(`Forget “${r.devices[i].name}”? It will have to pair again.`)) return; try { await api("DELETE", `/api/remote/devices/${r.devices[i].id}`); loadRemote(); } catch (e) { fail(e); } })), el)) : [li("No phones paired yet.")]));
+  }
+  $("remoteCodeBtn").onclick = async () => { try { await api("POST", "/api/remote/code"); loadRemote(); } catch (e) { fail(e); } };
+  new MutationObserver(() => { clearInterval(remoteTimer); if (!$("settingsPop").hidden) { loadRemote(); remoteTimer = setInterval(loadRemote, 3000); } }).observe($("settingsPop"), { attributes: true, attributeFilter: ["hidden"] });
 
   // ---------- activity log ----------
   const dayName = (ts) => { const d = new Date(ts * 1000), t = new Date(); const y = new Date(Date.now() - 864e5);

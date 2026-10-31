@@ -24,7 +24,7 @@ from .gpx import MAX_BYTES as GPX_MAX_BYTES, parse_gpx
 from .geocode import Geocoder
 import httpx
 
-from .movement import haversine_m, point_in_polygon, polygon_area_m2, polygon_centroid, validate_coords
+from .movement import offset_point, haversine_m, point_in_polygon, polygon_area_m2, polygon_centroid, validate_coords
 from .offline import PNG_SIGNATURE, OfflineDownloader, OfflineStore, fetch_tile, is_png
 from .recents import RecentsStore
 from .routes import RoutesStore
@@ -33,6 +33,7 @@ from .schedule import SchedulesStore, Scheduler, clean_plan
 from . import signals as signals_mod
 from .california import CA_BOX
 from .panic import PanicStore
+from .remote import RemoteListener, RemoteStore, bonjour_name, check_request, is_local, lan_addresses
 from .settings import SettingsStore
 from .trickortreat import HouseFinder
 
@@ -127,6 +128,12 @@ class ArmRequest(BaseModel):
     armed: bool
 
 
+class StepRequest(BaseModel):
+    heading_deg: float = Field(ge=0, le=360)
+    speed_kmh: float = Field(gt=0, le=60)
+    seconds: float = Field(default=1.0, gt=0, le=3)
+
+
 class PanicRequest(BaseModel):
     lat: float
     lon: float
@@ -168,6 +175,8 @@ def create_app(
     awake_interval: float = 2.5,
     activity_path: Optional[Path] = None,
     panic_path: Optional[Path] = None,
+    remote_path: Optional[Path] = None,
+    remote_listener=None,
     ambient_tick: float = 2.5,
     rng=None,
     tile_client: Optional[httpx.AsyncClient] = None,
@@ -182,6 +191,7 @@ def create_app(
     schedules = SchedulesStore(schedules_path or ROOT / "schedules.json")
     activity = ActivityLog(activity_path or ROOT / "activity.json")
     panic = PanicStore(panic_path or ROOT / "panic.json")
+    remote_store = RemoteStore(remote_path or ROOT / "remote.json")
     awake = keep_awake if keep_awake is not None else KeepAwake()
     watch = sleep_watch if sleep_watch is not None else SleepWatch()
     memory = DeviceMemory(devices_path or ROOT / "devices.json")
@@ -215,11 +225,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        await asyncio.to_thread(remote_apply)
         await scheduler.start()
         awake_task = asyncio.create_task(awake_loop(), name="locspoof-awake")
         yield
         awake_task.cancel()
         await asyncio.wait({awake_task}, timeout=3)
+        await asyncio.to_thread(remote.stop)
         await scheduler.stop()
         awake.close()
         # Closing the session also ends an iOS 17+ simulation; the phones return to real GPS.
@@ -228,6 +240,33 @@ def create_app(
     app = FastAPI(title="iPhone Location Simulator", lifespan=lifespan)
     app.state.manager = single
     app.state.fleet = fleet
+    remote = remote_listener if remote_listener is not None else RemoteListener(app)
+    app.state.remote = remote
+
+    def remote_apply() -> None:
+        """Open or close the phone-remote listener to match the settings (runs in a thread: opening a port can take a moment)."""
+        want = bool(settings.data.get("remote_enabled"))
+        port = int(settings.data.get("remote_port", 8787))
+        if want and (not remote.running or remote.port != port):
+            if remote.running:
+                remote.stop()
+            remote.start(port)
+        elif not want and (remote.running or remote.thread):
+            remote.stop()
+
+    @app.middleware("http")
+    async def lan_guard(request: Request, call_next):
+        """Requests from this Mac behave as always. Anything arriving over the network must be a paired phone doing something
+        on the short allow-list (see remote.py)."""
+        host = request.client.host if request.client else ""
+        if is_local(host):
+            return await call_next(request)
+        if not settings.data.get("remote_enabled"):
+            return JSONResponse({"error": {"code": "remote_off", "message": "The phone remote is off.", "hint": None}}, status_code=403)
+        bad = check_request(remote_store, request.method, request.url.path, request.headers.get("authorization", ""), request.query_params.get("t", ""))
+        if bad:
+            return JSONResponse({"error": {"code": "forbidden" if bad[0] == 403 else "unauthorized", "message": bad[1], "hint": bad[2]}}, status_code=bad[0])
+        return await call_next(request)
 
     async def get_manager(x_device: Optional[str] = Header(default=None)) -> DeviceManager:
         """The phone a request is about: the X-Device header (a UDID), else the first phone found."""
@@ -671,7 +710,60 @@ def create_app(
 
     @app.patch("/api/settings")
     async def patch_settings(body: dict):
-        return settings.update(body)
+        out = settings.update(body)
+        if "remote_enabled" in body or "remote_port" in body:
+            await asyncio.to_thread(remote_apply)
+        return out
+
+    # ---- phone remote (managed from this Mac; the phone only pairs, asks who it is, and sends joystick steps) ----
+    @app.get("/api/remote")
+    async def remote_state():
+        port = int(settings.data.get("remote_port", 8787))
+        addrs = [f"http://{a}:{port}/remote" for a in lan_addresses()]
+        bn = bonjour_name()
+        if bn:
+            addrs.insert(0, f"http://{bn}:{port}/remote")
+        return {"enabled": bool(settings.data.get("remote_enabled")), "running": bool(remote.running), "port": port, "error": remote.error,
+                "urls": addrs, "code": remote_store.current_code(), "devices": remote_store.listing()}
+
+    @app.post("/api/remote/code")
+    async def remote_new_code():
+        return remote_store.new_code()
+
+    @app.delete("/api/remote/devices/{device_id}")
+    async def remote_revoke(device_id: str):
+        if not remote_store.revoke(device_id):
+            raise AppError("not_found", "That phone is not paired.", status=404)
+        return {"ok": True}
+
+    @app.post("/api/remote/pair")
+    async def remote_pair(body: dict):
+        token = remote_store.pair(str(body.get("code", "")), str(body.get("name", "")))
+        activity.add("📱 A phone was paired with the remote: %s" % (str(body.get("name") or "Phone")[:40]), kind="remote")
+        return {"token": token}
+
+    @app.get("/api/remote/me")
+    async def remote_me():
+        return {"ok": True}
+
+    @app.post("/api/remote/step")
+    async def remote_step(body: StepRequest, manager: DeviceManager = Depends(get_manager)):
+        """The phone's joystick: move the fake location a little in a compass direction (sent about once a second while held)."""
+        sim = manager._sim_state()["simulation"]
+        if not sim["active"]:
+            raise AppError("no_start", "Set a starting location first.", "Pick a place on the map and press Set location, then use the pad.", 409)
+        lat, lon = offset_point(sim["lat"], sim["lon"], body.heading_deg, body.speed_kmh / 3.6 * body.seconds)
+        return await manager.set_location(lat, lon, None, quiet=True)
+
+    @app.get("/remote")
+    async def remote_page():
+        return FileResponse(STATIC / "remote.html")
+
+    @app.get("/remote.webmanifest")
+    async def remote_manifest():
+        return JSONResponse({"name": "iPhone Location Remote", "short_name": "Location", "start_url": "/remote", "scope": "/", "display": "standalone",
+                             "background_color": "#0b1220", "theme_color": "#0b1220", "icons": [{"src": "/static/icon.png", "sizes": "512x512", "type": "image/png"}]},
+                            media_type="application/manifest+json")
 
     @app.post("/api/gpx")
     async def gpx_import(request: Request):

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Location Remote</title>
+  <meta name="theme-color" content="#0b1220">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Location">
+  <link rel="manifest" href="/remote.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icon.png">
+  <link rel="icon" href="/static/icon.png">
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/static/remote.css?v=1">
+</head>
+<body>
+  <!-- first time: pair with the Mac -->
+  <main id="pair" hidden>
+    <img src="/static/icon.png" alt="" width="72" height="72">
+    <h1>Pair with your Mac</h1>
+    <p>On the Mac open <b>iPhone Location → ⚙ Settings → Phone remote</b>, press <b>New pairing code</b> and type the 6 digits here.</p>
+    <input id="pairCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" aria-label="Pairing code">
+    <input id="pairName" maxlength="40" placeholder="Name of this phone" aria-label="Name of this phone">
+    <button id="pairBtn" class="big">Pair</button>
+    <p id="pairMsg" class="msg"></p>
+  </main>
+
+  <!-- the remote -->
+  <div id="app" hidden>
+    <header id="rbar">
+      <div class="dot" id="rdot"></div>
+      <div class="txt"><b id="rtitle">Connecting…</b><small id="rsub"></small></div>
+      <select id="rphone" hidden aria-label="Which iPhone"></select>
+    </header>
+    <div id="rprog"><i id="rfill"></i></div>
+    <div id="rmap" aria-label="Map"></div>
+    <button id="rpanic" aria-label="Panic: go to the panic location">🚨</button>
+    <button id="rlocate" aria-label="Centre on the phone">🎯</button>
+
+    <section id="sheet">
+      <nav id="rtabs" role="tablist">
+        <button data-p="pad" class="on">🕹 Pad</button><button data-p="places">📍 Places</button><button data-p="trip">🚶 Trip</button>
+      </nav>
+
+      <div class="pane" id="p-pad">
+        <div id="stickwrap">
+          <div id="stick" aria-label="Joystick: drag to walk"><div id="knob"></div></div>
+          <div class="side">
+            <label>Top speed <b><output id="padSpeedOut">6</output> km/h</b><input id="padSpeed" type="range" min="1" max="40" value="6"></label>
+            <p id="padHint" class="hint">Drag the stick. Further = faster. Let go to stand still.</p>
+          </div>
+        </div>
+        <div class="row3">
+          <button id="stopBtn" class="sec">⏹ Stop</button>
+          <button id="returnBtn" class="sec">↩ Back to start</button>
+          <button id="restoreBtn" class="danger">Real GPS</button>
+        </div>
+      </div>
+
+      <div class="pane" id="p-places" hidden>
+        <form id="searchForm"><input id="q" type="search" placeholder="Search a place or address" autocomplete="off" aria-label="Search"><button class="sec">Search</button></form>
+        <ul id="results" class="list" hidden></ul>
+        <p id="pinInfo" class="hint">Tap the map to drop a pin.</p>
+        <button id="setBtn" class="big">📍 Set location here</button>
+        <h3>Favorites</h3><ul id="favs" class="list"></ul>
+        <h3>Recent</h3><ul id="recent" class="list"></ul>
+      </div>
+
+      <div class="pane" id="p-trip" hidden>
+        <div class="seg" id="modeSeg"><button data-m="walk" class="on">🚶 Walk</button><button data-m="drive">🚗 Drive</button><button data-m="straight">➡️ Straight</button></div>
+        <label class="slider">Speed <b><output id="tripSpeedOut">5</output> km/h</b><input id="tripSpeed" type="range" min="1" max="120" value="5"></label>
+        <button id="goBtn" class="big">▶ Go to the pin</button>
+        <h3>Saved routes</h3><ul id="routes" class="list"></ul>
+      </div>
+    </section>
+    <div id="rtoast" hidden></div>
+  </div>
+
+  <script src="/static/vendor/leaflet/leaflet.js"></script>
+  <script src="/static/remote.js?v=1"></script>
+</body>
+</html>
