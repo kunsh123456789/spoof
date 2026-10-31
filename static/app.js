@@ -12,9 +12,9 @@
   }).addTo(map);
 
   let pin = null, simMarker = null, status = null, busy = false, toastTimer = null, centeredOnSim = false;
-  let mode = "walk", kind = "single", tab = "place", stops = [], houses = [], landed = false;
+  let mode = "walk", kind = "single", tab = "place", stops = [], houses = [], landed = false, area = null, draft = [], drawing = false;
   let routeLayer = null, routeFetched = false;
-  const stopLayer = L.layerGroup().addTo(map), houseLayer = L.layerGroup().addTo(map);
+  const stopLayer = L.layerGroup().addTo(map), houseLayer = L.layerGroup().addTo(map), areaLayer = L.layerGroup().addTo(map);
   const accent = () => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0a84ff";
 
   // ---------- helpers ----------
@@ -55,7 +55,7 @@
     tab = name;
     document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     document.querySelectorAll(".tabpanel").forEach((p) => (p.hidden = p.id !== `tab-${name}`));
-    if (name === "tot") stopLayer.remove(); else stopLayer.addTo(map);     // keep manual stops out of trick-or-treat view
+    if (name === "tot") { stopLayer.remove(); areaLayer.addTo(map); } else { stopLayer.addTo(map); areaLayer.remove(); if (drawing) cancelDraw(); }
     store.set("tab", name); updateTheme();
   }
   document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
@@ -64,6 +64,7 @@
     document.documentElement.dataset.theme = on ? "halloween" : "";
     $("totBanner").hidden = !on;
     if (routeLayer) routeLayer.setStyle({ color: accent() });
+    if (typeof renderArea === "function") renderArea();
   }
   document.querySelectorAll("details.howto").forEach((d) => {          // remember which instruction boxes you closed
     if (store.get(`how-${d.id}`) === "closed") d.open = false;
@@ -90,7 +91,7 @@
     if (Math.abs(lat) > 90 || Math.abs(lon) > 180) throw { message: "Latitude must be within ±90 and longitude within ±180." };
     return { lat, lon };
   }
-  map.on("click", (e) => setPin(e.latlng.lat, e.latlng.lng));
+  map.on("click", (e) => (drawing ? addVertex(e.latlng.wrap()) : setPin(e.latlng.lat, e.latlng.lng)));
   for (const id of ["lat", "lon"]) $(id).addEventListener("change", () => {
     try { const { lat, lon } = readInputs(); setPin(lat, lon, { pan: true }); } catch (e) { fail(e); }
   });
@@ -183,27 +184,83 @@
   });
 
   // ---------- trick or treat ----------
-  const TOT_SPEED = 4.5;
-  $("radius").addEventListener("input", () => ($("radiusOut").textContent = $("radius").value));
+  const TOT_SPEED = 4.5, FALLBACK_RADIUS = 350, MAX_AREA_KM2 = 4;
   $("houses").addEventListener("input", () => ($("housesOut").textContent = $("houses").value));
   function clearHouses() { houses = []; houseLayer.clearLayers(); $("totInfo").hidden = true; $("totStartBtn").disabled = true; }
+  function areaKm2(poly) {                                  // same equirectangular shoelace as the server
+    const lat0 = poly.reduce((a, p) => a + p[0], 0) / poly.length * Math.PI / 180, k = Math.PI / 180 * 6371008.8;
+    const pts = poly.map(([la, lo]) => [lo * Math.cos(lat0) * k, la * k]);
+    let sum = 0; pts.forEach((p, i) => { const q = pts[(i + 1) % pts.length]; sum += p[0] * q[1] - q[0] * p[1]; });
+    return Math.abs(sum) / 2 / 1e6;
+  }
+  function areaText() {
+    if (drawing) return `✏️ Drawing: click points around the neighborhood (${draft.length} so far). Click the first point or press Finish to close the shape.`;
+    if (area) { const km = areaKm2(area); return `✅ Area drawn: ${km < 0.1 ? `${Math.round(km * 1e6).toLocaleString()} m²` : `${km.toFixed(2)} km²`} · ${area.length} points.${km > MAX_AREA_KM2 ? ` ⚠️ Too big — max ${MAX_AREA_KM2} km².` : ""}`; }
+    return `No area drawn — houses will be searched ${FALLBACK_RADIUS} m around the pin. Press “Draw area” to outline a neighborhood instead.`;
+  }
+  function renderArea() {
+    areaLayer.clearLayers();
+    const col = accent();
+    if (drawing) {
+      if (draft.length >= 2) L.polyline(draft, { color: col, weight: 3, dashArray: "6 6", interactive: false }).addTo(areaLayer);
+      draft.forEach((p, i) => L.circleMarker(p, { radius: i === 0 ? 8 : 5, color: "#fff", weight: 2, fillColor: col, fillOpacity: 1, interactive: false }).addTo(areaLayer));
+    } else if (area) L.polygon(area, { color: col, weight: 3, fillColor: col, fillOpacity: 0.16, interactive: false }).addTo(areaLayer);
+    $("areaInfo").textContent = areaText();
+    $("drawIdle").hidden = drawing; $("drawControls").hidden = !drawing;
+    $("clearAreaBtn").hidden = !area; $("drawBtn").lastChild.textContent = area ? " Redraw area" : " Draw area";
+    $("finishBtn").disabled = draft.length < 3;
+  }
+  function startDraw() {
+    drawing = true; draft = []; area = null; clearHouses();
+    map.getContainer().style.cursor = "crosshair"; map.doubleClickZoom.disable(); renderArea();
+  }
+  function endDraw() { drawing = false; map.getContainer().style.cursor = ""; map.doubleClickZoom.enable(); }
+  function finishDraw() {
+    if (draft.length < 3) return toast("Click at least 3 points to outline an area.");
+    area = draft.slice(); draft = []; endDraw(); renderArea();
+    map.fitBounds(L.latLngBounds(area).pad(0.2), { maxZoom: 18 });
+    if (areaKm2(area) > MAX_AREA_KM2) toast(`That area is too big. Redraw a smaller one (max ${MAX_AREA_KM2} km²).`, 6000);
+  }
+  function cancelDraw() { draft = []; endDraw(); renderArea(); }
+  function addVertex(ll) {
+    const p = [ll.lat, ll.lng];
+    if (draft.length >= 3) {                               // clicking near the first point closes the shape
+      const a = map.latLngToContainerPoint(draft[0]), b = map.latLngToContainerPoint(ll);
+      if (a.distanceTo(b) < 14) return finishDraw();
+    }
+    if (draft.length >= 100) return toast("Maximum 100 points — press Finish.");
+    draft.push(p); renderArea();
+  }
+  $("drawBtn").onclick = startDraw;
+  $("finishBtn").onclick = finishDraw;
+  $("undoBtn").onclick = () => { draft.pop(); renderArea(); };
+  $("cancelDrawBtn").onclick = cancelDraw;
+  $("clearAreaBtn").onclick = () => { area = null; clearHouses(); renderArea(); };
+  document.addEventListener("keydown", (e) => {
+    if (!drawing || /INPUT|TEXTAREA/.test(document.activeElement?.tagName)) return;
+    if (e.key === "Escape") cancelDraw(); else if (e.key === "Enter") finishDraw();
+    else if ((e.key === "Backspace" || e.key === "z") && draft.length) { e.preventDefault(); draft.pop(); renderArea(); }
+  });
+
   $("findBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
-    const c = readInputs(); clearHouses();
+    if (drawing) throw { message: "Finish drawing your area first.", hint: "Click the first point or press Finish." };
+    const body = { houses: Number($("houses").value), radius_m: FALLBACK_RADIUS };
+    if (area) { body.polygon = area; if (Number.isFinite(parseFloat($("lat").value))) Object.assign(body, readInputs()); }
+    else Object.assign(body, readInputs());                  // no area: needs the pin
+    clearHouses();
     $("totInfo").hidden = false; $("totInfo").textContent = "Looking for houses on OpenStreetMap…";
-    try {
-      const res = await api("POST", "/api/trick-or-treat/plan", { ...c, radius_m: Number($("radius").value), houses: Number($("houses").value) });
-      houses = res.houses;
-    } catch (e) { $("totInfo").hidden = true; throw e; }
+    try { houses = (await api("POST", "/api/trick-or-treat/plan", body)).houses; }
+    catch (e) { $("totInfo").hidden = true; throw e; }
     houses.forEach((h, i) => L.marker([h.lat, h.lon], { icon: L.divIcon({ className: "", html: `<div class="pumpkin">🎃</div>`, iconSize: [22, 22] }), title: `House ${i + 1}`, interactive: false }).addTo(houseLayer));
     L.polyline(houses.map((h) => [h.lat, h.lon]), { color: "#ff7a00", weight: 2, dashArray: "3 6", interactive: false }).addTo(houseLayer);
     map.fitBounds(L.latLngBounds(houses.map((h) => [h.lat, h.lon])).pad(0.25), { maxZoom: 18 });
     let dist = 0; for (let i = 1; i < houses.length; i++) dist += haversine([houses[i - 1].lat, houses[i - 1].lon], [houses[i].lat, houses[i].lon]);
     const secs = dist / (TOT_SPEED / 3.6) * 1.3 + houses.reduce((a, h) => a + h.dwell_s, 0);
-    $("totInfo").textContent = `🎃 ${houses.length} houses · about ${fmtDist(dist)} of walking · roughly ${Math.round(secs / 60)} min. Press “2 · Start” when ready.`;
+    $("totInfo").textContent = `🎃 ${houses.length} houses · about ${fmtDist(dist)} of walking · roughly ${Math.round(secs / 60)} min. Press “3 · Start” when ready.`;
     $("totStartBtn").disabled = false;
   });
   $("totStartBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
-    if (!houses.length) throw { message: "Find houses first.", hint: "Press “1 · Find houses”." };
+    if (!houses.length) throw { message: "Find houses first.", hint: "Press “2 · Find houses”." };
     await startJourney({
       stops: houses.map((h) => ({ lat: h.lat, lon: h.lon, dwell_s: h.dwell_s })), mode: "walk", speed_kmh: TOT_SPEED,
       jump_to_first: true, kind: "trick_or_treat", speed_jitter: 0.2,
@@ -315,5 +372,5 @@
   (function loop() { refresh().finally(() => setTimeout(loop, status?.walk?.active ? 1000 : 3000)); })();
 
   showTab(["place", "move", "tot", "saved"].includes(store.get("tab")) ? store.get("tab") : "place");
-  pinLine(); loadFavs(); loadRecent(); renderStops();
+  pinLine(); loadFavs(); loadRecent(); renderStops(); renderArea();
 })();

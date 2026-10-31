@@ -8,6 +8,7 @@
   .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.9); }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
 #map { position: fixed; inset: 0; z-index: 0; }
@@ -126,3 +127,4 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 5px; font-size: 1
   #toast { bottom: calc(62vh + 8px); }
   #totBanner { top: 8px; font-size: 13px; }
 }
+.infocard + .row { margin-top: 8px; }

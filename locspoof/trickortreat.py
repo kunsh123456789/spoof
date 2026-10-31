@@ -11,7 +11,7 @@ from typing import Optional
 import httpx
 
 from .errors import AppError
-from .movement import haversine_m
+from .movement import Polygon, haversine_m, point_in_polygon
 
 log = logging.getLogger("locspoof.tot")
 
@@ -23,13 +23,17 @@ DEDUPE_M = 12.0
 Point = tuple[float, float]
 
 
-def build_query(lat: float, lon: float, radius_m: int) -> str:
-    around = f"(around:{radius_m},{lat:.6f},{lon:.6f})"
+def build_query(lat: float, lon: float, radius_m: int, polygon: Optional[Polygon] = None) -> str:
+    """Overpass QL for houses inside ``polygon`` (if given) or within ``radius_m`` of the point."""
+    if polygon:
+        area = '(poly:"' + " ".join(f"{la:.6f} {lo:.6f}" for la, lo in polygon) + '")'
+    else:
+        area = f"(around:{radius_m},{lat:.6f},{lon:.6f})"
     return (
         "[out:json][timeout:25];(\n"
-        f'  way["building"~"^({HOUSE_TYPES})$"]{around};\n'
-        f'  way["building"]["addr:housenumber"]{around};\n'
-        f'  node["addr:housenumber"]{around};\n'
+        f'  way["building"~"^({HOUSE_TYPES})$"]{area};\n'
+        f'  way["building"]["addr:housenumber"]{area};\n'
+        f'  node["addr:housenumber"]{area};\n'
         ");out center 800;"
     )
 
@@ -84,20 +88,27 @@ class HouseFinder:
         self._lock = asyncio.Lock()
         self._last = 0.0
 
-    async def plan(self, lat: float, lon: float, radius_m: int, count: int, rng: Optional[random.Random] = None) -> list[dict]:
-        points = await self._fetch(lat, lon, radius_m)
+    async def plan(
+        self, lat: float, lon: float, radius_m: int, count: int, rng: Optional[random.Random] = None,
+        polygon: Optional[Polygon] = None,
+    ) -> list[dict]:
+        points = await self._fetch(lat, lon, radius_m, polygon)
+        if polygon:  # Overpass may return buildings that merely touch the shape; keep only those inside it
+            points = [p for p in points if point_in_polygon(p[0], p[1], polygon)]
         plan = build_plan(points, (lat, lon), count, rng)
         if len(plan) < MIN_HOUSES:
+            where = "inside the area you drew" if polygon else f"within {radius_m} m"
             raise AppError(
                 "no_houses",
-                f"Found only {len(plan)} house(s) within {radius_m} m.",
-                "Move the pin to a residential street, or increase the radius.",
+                f"Found only {len(plan)} house(s) {where}.",
+                "Draw a bigger area over a residential neighborhood." if polygon
+                else "Move the pin to a residential street, or draw an area.",
                 404,
             )
         return plan
 
-    async def _fetch(self, lat: float, lon: float, radius_m: int) -> list[Point]:
-        query = build_query(lat, lon, radius_m)
+    async def _fetch(self, lat: float, lon: float, radius_m: int, polygon: Optional[Polygon] = None) -> list[Point]:
+        query = build_query(lat, lon, radius_m, polygon)
         last_err = "no response"
         async with self._lock:
             for url in OVERPASS_URLS:

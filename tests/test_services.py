@@ -162,3 +162,49 @@ def test_house_finder_uses_overpass_then_mirror_and_errors():
     with pytest.raises(AppError) as e:
         asyncio.run(hf.plan(40, -75, 300, 5))
     assert e.value.code == "houses_unavailable"
+
+
+# ---- drawn areas ---------------------------------------------------------------------------
+
+from locspoof.movement import point_in_polygon, polygon_area_m2, polygon_centroid
+
+SQ = [(40.0, -75.0), (40.0, -74.99), (40.01, -74.99), (40.01, -75.0)]
+L_SHAPE = [(0, 0), (0, 2), (1, 2), (1, 1), (2, 1), (2, 0)]
+
+
+def test_polygon_area_matches_known_size():
+    # 0.01 deg lat ~ 1112 m; 0.01 deg lon at 40N ~ 852 m  ->  ~0.95 km^2
+    assert polygon_area_m2(SQ) == pytest.approx(1112 * 852, rel=0.02)
+
+
+def test_point_in_polygon_concave_and_edges():
+    assert point_in_polygon(0.5, 1.5, L_SHAPE) and point_in_polygon(1.5, 0.5, L_SHAPE)
+    assert not point_in_polygon(1.5, 1.5, L_SHAPE)       # the notch of the L
+    assert not point_in_polygon(3, 3, L_SHAPE)
+    assert polygon_centroid(SQ) == pytest.approx((40.005, -74.995))
+
+
+def test_query_uses_poly_filter_instead_of_around():
+    q = build_query(40, -75, 350, SQ)
+    assert 'poly:"40.000000 -75.000000 40.000000 -74.990000' in q and "around" not in q
+
+
+def test_house_finder_keeps_only_points_inside_drawn_area():
+    inside = [(40.002, -74.998), (40.004, -74.996), (40.006, -74.994), (40.008, -74.992)]
+    outside = [(40.02, -74.98), (39.99, -75.01)]
+    seen = {}
+
+    def handler(req):
+        seen["q"] = req.content.decode()
+        els = [{"type": "way", "center": {"lat": a, "lon": b}} for a, b in inside + outside]
+        return httpx.Response(200, json={"elements": els})
+
+    hf = HouseFinder(client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), min_interval=0)
+    plan = asyncio.run(hf.plan(40.005, -74.995, 350, 10, random.Random(0), polygon=SQ))
+    assert {(p["lat"], p["lon"]) for p in plan} == set(inside)
+    assert "poly%3A" in seen["q"] or "poly:" in seen["q"]
+    # too few houses inside the drawn area -> area-specific message
+    hf = HouseFinder(client=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"elements": [{"type": "way", "center": {"lat": 40.02, "lon": -74.98}}]}))), min_interval=0)
+    with pytest.raises(AppError) as e:
+        asyncio.run(hf.plan(40.005, -74.995, 350, 10, polygon=SQ))
+    assert e.value.code == "no_houses" and "area you drew" in e.value.message

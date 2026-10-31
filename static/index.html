@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>iPhone Location Simulator</title>
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=4">
+  <link rel="stylesheet" href="/static/style.css?v=7">
 </head>
 <body>
   <div id="map" aria-label="Map"></div>
@@ -111,23 +111,33 @@
         <details class="howto" id="how-tot" open>
           <summary>How it works</summary>
           <ol>
-            <li><b>Pick a neighborhood:</b> click the map on a residential street (or search for one in the Place tab).</li>
-            <li>Press <b>1 · Find houses</b>. 🎃 pumpkins appear on the map — real houses from OpenStreetMap, ordered into a house-to-house tour.</li>
-            <li>Press <b>2 · Start</b>. The phone jumps to the first house, then walks street to street at a natural pace and <b>pauses 20–120 s at every door</b>, like a real trick-or-treater.</li>
-            <li>Watch progress in the bottom bar. Press <b>Stop moving</b> to end early — the phone stays where it is.</li>
+            <li><b>Draw your area:</b> press <b>Draw area</b>, then click points on the map around the neighborhood you want. Click the <b>first point</b> again (or press <b>Finish</b>) to close the shape. Skip this to use 350 m around the pin instead.</li>
+            <li>Press <b>Find houses</b>. 🎃 pumpkins appear on the map — real houses from OpenStreetMap inside your area, ordered into a house-to-house tour.</li>
+            <li>Press <b>Start</b>. The phone jumps to the first house, then walks street to street at a natural pace and <b>pauses 20–120 s at every door</b>, like a real trick-or-treater.</li>
+            <li>Watch progress in the bottom bar. <b>Stop moving</b> ends it early — the phone stays where it is.</li>
           </ol>
           <p class="muted">While this tab is open the app turns orange so you know trick-or-treat mode is active.</p>
         </details>
-        <p class="pinline" data-pinline></p>
-        <label class="slider">Search radius: <b><output id="radiusOut">350</output> m</b>
-          <input id="radius" type="range" min="150" max="900" step="50" value="350">
-        </label>
+
+        <h2>Area</h2>
+        <p id="areaInfo" class="infocard"></p>
+        <div id="drawIdle" class="row">
+          <button id="drawBtn" class="secondary"><span class="step">1</span> Draw area</button>
+          <button id="clearAreaBtn" class="secondary" hidden>Clear area</button>
+        </div>
+        <div id="drawControls" class="row" hidden>
+          <button id="finishBtn" class="primary" disabled>Finish</button>
+          <button id="undoBtn" class="secondary">Undo point</button>
+          <button id="cancelDrawBtn" class="secondary">Cancel</button>
+        </div>
+
+        <h2>Houses</h2>
         <label class="slider">Number of houses: <b><output id="housesOut">20</output></b>
           <input id="houses" type="range" min="5" max="40" step="1" value="20">
         </label>
-        <button id="findBtn" class="secondary full"><span class="step">1</span> Find houses</button>
+        <button id="findBtn" class="secondary full"><span class="step">2</span> Find houses</button>
         <p id="totInfo" class="infocard" hidden></p>
-        <button id="totStartBtn" class="primary full" disabled><span class="step">2</span> Start trick-or-treating</button>
+        <button id="totStartBtn" class="primary full" disabled><span class="step">3</span> Start trick-or-treating</button>
       </section>
 
       <!-- ============ SAVED ============ -->
@@ -169,6 +179,6 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/app.js?v=4"></script>
+  <script src="/static/app.js?v=7"></script>
 </body>
 </html>

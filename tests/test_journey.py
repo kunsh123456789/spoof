@@ -173,3 +173,33 @@ def test_favorite_by_place_name_without_pin(env, tmp_path):
         g = c.post("/api/favorites", json={"name": "Typed", "lat": 1, "lon": 2}).json()
         assert g["lat"] == 1
         assert c.post("/api/favorites", json={"name": "x"}).status_code == 422
+
+
+SQUARE = [[40.000, -75.000], [40.000, -74.996], [40.003, -74.996], [40.003, -75.000]]  # ~340 m x 330 m
+
+
+def test_plan_with_drawn_area_passes_polygon_and_starts_near_pin(env):
+    c, _, _, houses = env
+    r = c.post("/api/trick-or-treat/plan", json={"polygon": SQUARE, "houses": 4})
+    assert r.status_code == 200
+    lat, lon, _, count, poly = houses.calls[-1]
+    assert count == 4 and len(poly) == 4
+    assert (round(lat, 5), round(lon, 5)) == (40.0015, -74.998)  # no pin -> centroid
+    c.post("/api/trick-or-treat/plan", json={"polygon": SQUARE, "houses": 4, "lat": 40.001, "lon": -74.999})
+    assert houses.calls[-1][:2] == (40.001, -74.999)               # pin inside the area -> start there
+    c.post("/api/trick-or-treat/plan", json={"polygon": SQUARE, "houses": 4, "lat": 10, "lon": 10})
+    assert houses.calls[-1][0] == pytest.approx(40.0015)           # pin outside the area is ignored
+
+
+@pytest.mark.parametrize("body,code", [
+    ({"polygon": SQUARE[:2]}, "bad_area"),
+    ({"polygon": [[40, -75]] * 101}, "bad_area"),
+    ({"polygon": [[40, -75], [40, -74.99999], [40.00001, -75]]}, "area_too_small"),
+    ({"polygon": [[40, -75], [40, -74], [41, -74], [41, -75]]}, "area_too_big"),
+    ({"polygon": [[95, -75], [40, -74], [41, -74]]}, "bad_request"),
+    ({}, "no_pin"),
+])
+def test_plan_area_validation(env, body, code):
+    c, *_ = env
+    r = c.post("/api/trick-or-treat/plan", json={"houses": 5, **body})
+    assert r.status_code == 422 and r.json()["error"]["code"] == code

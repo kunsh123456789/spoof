@@ -98,10 +98,13 @@ The bar at the bottom always shows what the phone is doing, with **Stop moving**
   **multi-stop route**: move the pin, press **Add pin as stop**, repeat; reorder with the arrows; optionally set a pause at
   each stop and **Loop**. You must set a starting location first.
 * **🎃 Trick or treat**: while this tab is open (and while a trick-or-treat walk is running) the app turns orange and shows a
-  "Trick-or-treat mode" banner. Put the pin on a residential street, press **1 · Find houses** (pumpkins appear: real houses
-  from OpenStreetMap, ordered into a house-to-house tour), then **2 · Start**. The phone jumps to the first house, walks
-  street to street at about 4.5 km/h with natural speed variation, and pauses 20-120 s at every door. Radius and number of
-  houses are adjustable. **Stop moving** ends it, leaving the phone where it is.
+  "Trick-or-treat mode" banner.
+  1. **Draw area**: click points on the map around the neighborhood you want and click the first point again (or press
+     **Finish**) to close the shape. **Undo point** removes the last point, **Esc** cancels. The area can be at most 4 km². If you
+     skip drawing, houses are searched 350 m around the pin instead.
+  2. **Find houses**: 🎃 pumpkins appear for real houses from OpenStreetMap inside your area, ordered into a house-to-house tour.
+  3. **Start**: the phone jumps to the first house, walks street to street at about 4.5 km/h with natural speed variation, and
+     pauses 20-120 s at every door. **Stop moving** ends it, leaving the phone where it is.
 * **★ Saved**: **Favorites** take a name plus a place name, coordinates like `48.8584, 2.2945`, or nothing (saves the
   current pin). Click one to move the pin there, **＋** adds it as a stop. **Recent** keeps your last 15 locations (each Set
   location and finished route); **★** promotes one to a favorite.
@@ -128,7 +131,8 @@ Command-line options: `python app.py --port 8000 --tunnel auto -v` (`-v` = debug
 | **No Developer Disk Image / service unavailable** | Be online for the first mount; `pip install -U pymobiledevice3` for newly released iOS versions. Replug the phone. |
 | Location reverts after a while / when I quit | iOS 17+ simulation ends when the app disconnects (see note above). |
 | "Could not get a road route" / "No route" | The routing service is down, or the points aren't connected by roads. Try again, or use Straight line. |
-| "Could not look up houses" / "Found only N houses" | The Overpass service is busy (wait a minute), or move the pin to a residential street / increase the radius. |
+| "Could not look up houses" / "Found only N houses" | The Overpass service is busy (wait a minute), or draw a bigger area over a residential neighborhood (OpenStreetMap needs houses mapped there). |
+| "That area is too big" | Draw a smaller area (max 4 km²). |
 | Search says "rate-limiting" or "offline" | Nominatim allows ~1 request/second and needs internet. Wait a moment. |
 | Map is grey | OpenStreetMap tiles need internet. |
 | Something else | Run `python app.py -v` and read the terminal; every failure logs a full traceback there. |

@@ -76,6 +76,6 @@ class FakeHouses:
     def __init__(self):
         self.calls: list = []
 
-    async def plan(self, lat, lon, radius_m, count, rng=None):
-        self.calls.append((lat, lon, radius_m, count))
+    async def plan(self, lat, lon, radius_m, count, rng=None, polygon=None):
+        self.calls.append((lat, lon, radius_m, count) if polygon is None else (lat, lon, radius_m, count, polygon))
         return [{"lat": lat + i * 0.0001, "lon": lon, "dwell_s": 0.02} for i in range(min(count, 5))]

@@ -15,7 +15,7 @@ from .device import Backend, DeviceManager, JourneyPlan, PmdBackend, Stop
 from .errors import AppError
 from .favorites import FavoritesStore
 from .geocode import Geocoder
-from .movement import validate_coords
+from .movement import point_in_polygon, polygon_area_m2, polygon_centroid, validate_coords
 from .recents import RecentsStore
 from .routing import Router
 from .trickortreat import HouseFinder
@@ -59,9 +59,15 @@ class FavoriteRequest(BaseModel):
     query: Optional[str] = None   # a place name to look up instead of coordinates
 
 
-class TrickOrTreatRequest(Coords):
-    radius_m: int = 350
+MAX_AREA_M2 = 4_000_000  # 4 km^2: keeps the free Overpass query small and the tour walkable
+
+
+class TrickOrTreatRequest(BaseModel):
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    radius_m: int = 350            # used only when no polygon is drawn
     houses: int = 20
+    polygon: Optional[list[list[float]]] = None  # [[lat, lon], ...] the area to trick-or-treat in
 
 
 def create_app(
@@ -163,12 +169,35 @@ def create_app(
 
     @app.post("/api/trick-or-treat/plan")
     async def trick_or_treat_plan(body: TrickOrTreatRequest):
-        validate_coords(body.lat, body.lon)
-        if not 100 <= body.radius_m <= 1500:
-            raise AppError("bad_radius", "Radius must be between 100 and 1500 m.", status=422)
         if not 3 <= body.houses <= 60:
             raise AppError("bad_count", "Number of houses must be between 3 and 60.", status=422)
-        plan = await houses.plan(body.lat, body.lon, body.radius_m, body.houses)
+        polygon = None
+        if body.polygon:
+            if not 3 <= len(body.polygon) <= 100 or any(len(p) != 2 for p in body.polygon):
+                raise AppError("bad_area", "The area needs 3 to 100 points.", status=422)
+            polygon = [(p[0], p[1]) for p in body.polygon]
+            for la, lo in polygon:
+                validate_coords(la, lo)
+            area = polygon_area_m2(polygon)
+            if area < 2_000:
+                raise AppError("area_too_small", "That area is tiny.", "Draw a larger area around several houses.", 422)
+            if area > MAX_AREA_M2:
+                raise AppError(
+                    "area_too_big", f"That area is too big ({area / 1e6:.1f} km²).",
+                    f"Draw a smaller area (at most {MAX_AREA_M2 / 1e6:.0f} km²).", 422,
+                )
+            if body.lat is not None and body.lon is not None and point_in_polygon(body.lat, body.lon, polygon):
+                lat, lon = body.lat, body.lon       # start near the pin if it is inside the area
+            else:
+                lat, lon = polygon_centroid(polygon)
+        else:
+            if body.lat is None or body.lon is None:
+                raise AppError("no_pin", "Drop a pin or draw an area first.", status=422)
+            validate_coords(body.lat, body.lon)
+            if not 100 <= body.radius_m <= 1500:
+                raise AppError("bad_radius", "Radius must be between 100 and 1500 m.", status=422)
+            lat, lon = body.lat, body.lon
+        plan = await houses.plan(lat, lon, body.radius_m, body.houses, polygon=polygon)
         return {"houses": plan}
 
     @app.get("/api/recent")

@@ -80,3 +80,32 @@ class PathFollower:
                 self.pos = (lat, lon)
                 distance_m = 0
         return self.pos[0], self.pos[1], self.done
+
+
+Polygon = list[tuple[float, float]]  # [(lat, lon), ...], implicitly closed
+
+
+def polygon_area_m2(poly: Polygon) -> float:
+    """Area via a local equirectangular projection (accurate for neighbourhood-sized shapes)."""
+    lat0 = math.radians(sum(p[0] for p in poly) / len(poly))
+    k = math.pi / 180 * EARTH_RADIUS_M
+    pts = [((lon * math.cos(lat0)) * k, lat * k) for lat, lon in poly]
+    s = sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]))
+    return abs(s) / 2
+
+
+def point_in_polygon(lat: float, lon: float, poly: Polygon) -> bool:
+    """Even-odd ray casting."""
+    inside = False
+    j = len(poly) - 1
+    for i in range(len(poly)):
+        yi, xi = poly[i]
+        yj, xj = poly[j]
+        if (yi > lat) != (yj > lat) and lon < (xj - xi) * (lat - yi) / (yj - yi) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+def polygon_centroid(poly: Polygon) -> tuple[float, float]:
+    return sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly)
