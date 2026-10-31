@@ -43,6 +43,7 @@ class Router:
     def __init__(self, client: Optional[httpx.AsyncClient] = None, min_interval: float = 1.1, offline=None):
         self._client = client
         self.offline = offline            # OfflineStore (fallback when the routing service is unreachable)
+        self.retry_delays = (0.8, 2.0)    # pauses between attempts when the service errors or does not answer
         self._min_interval = min_interval
         self._lock = asyncio.Lock()
         self._last = 0.0
@@ -70,7 +71,7 @@ class Router:
                 if wait > 0:
                     await asyncio.sleep(wait)
                 try:
-                    resp = await self._get(f"{BASE}/{server}/route/v1/{profile}/{coords}", params)
+                    resp = await self._get_retry(f"{BASE}/{server}/route/v1/{profile}/{coords}", params)
                 finally:
                     self._last = time.monotonic()
                 if resp is None:
@@ -93,7 +94,7 @@ class Router:
                     )
                 log.warning("routing attempt failed (%s %s): %s", server, profile, resp.status_code)
         if data is None and self.offline:
-            legs = self.offline.route(waypoints, mode)
+            legs = await asyncio.to_thread(self.offline.route, waypoints, mode)   # graph loading + A* must not stall the app
             if legs:
                 log.info("routing service unreachable; used offline street data")
                 return legs
@@ -109,6 +110,18 @@ class Router:
         while len(self._cache) > 32:
             self._cache.popitem(last=False)
         return legs
+
+    async def _get_retry(self, url: str, params: dict) -> Optional[httpx.Response]:
+        """GET, trying again after a pause when the service errors (5xx) or does not answer at all."""
+        resp = None
+        for i in range(len(self.retry_delays) + 1):
+            resp = await self._get(url, params)
+            if resp is not None and resp.status_code < 500:
+                return resp
+            if i < len(self.retry_delays):
+                log.info("routing service not ready (%s); retrying", "no answer" if resp is None else resp.status_code)
+                await asyncio.sleep(self.retry_delays[i])
+        return resp
 
     async def _get(self, url: str, params: dict) -> Optional[httpx.Response]:
         headers = {"User-Agent": USER_AGENT}

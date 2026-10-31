@@ -179,3 +179,25 @@ def test_index_and_static_served(make_client, backend):
         assert "leaflet" in page.text.lower() and page.headers["cache-control"] == "no-cache"
         js = c.get("/static/app.js")
         assert js.status_code == 200 and js.headers["cache-control"] == "no-cache"
+
+
+EXPECTED_ROUTES = {
+    ("GET", "/api/status"), ("POST", "/api/trust"), ("POST", "/api/location"), ("DELETE", "/api/location"),
+    ("POST", "/api/journey"), ("POST", "/api/journey/return"), ("GET", "/api/journey/route"), ("PATCH", "/api/journey"),
+    ("DELETE", "/api/journey"), ("POST", "/api/trick-or-treat/plan"),
+    ("GET", "/api/offline"), ("POST", "/api/offline/estimate"), ("POST", "/api/offline"), ("DELETE", "/api/offline/{pack_id}"),
+    ("GET", "/tiles/{z}/{x}/{y}.png"),
+    ("GET", "/api/devices"), ("POST", "/api/devices/scan"), ("POST", "/api/wifi"),
+    ("GET", "/api/settings"), ("PATCH", "/api/settings"), ("POST", "/api/gpx"),
+    ("GET", "/api/routes"), ("POST", "/api/routes"), ("DELETE", "/api/routes/{route_id}"), ("POST", "/api/routes/{route_id}/start"),
+    ("GET", "/api/recent"), ("DELETE", "/api/recent"),
+    ("GET", "/api/search"), ("GET", "/api/favorites"), ("POST", "/api/favorites"), ("DELETE", "/api/favorites/{fav_id}"),
+    ("GET", "/"),
+}
+
+
+def test_every_expected_route_still_exists(make_client, backend):
+    """Guards against a refactor silently dropping endpoints (the UI would just show 404s)."""
+    with make_client(backend) as c:
+        have = {(m, r.path) for r in c.app.routes if hasattr(r, "methods") for m in r.methods if m not in ("HEAD", "OPTIONS")}
+    assert EXPECTED_ROUTES <= have, sorted(EXPECTED_ROUTES - have)

@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from pathlib import Path
 
@@ -16,19 +17,32 @@ class FakeSession:
         self.closed = False
         self.fail_next = False
         self.broken = False
+        self.hang = False          # set() never returns (a phone that went to sleep mid-call)
+        self.delay = 0.0           # set() takes this long
+        self.started = 0           # calls entered / completed, to prove none is cut off half way
+        self.finished = 0
+        self.hang_close = False
 
     async def set(self, lat, lon):
+        self.started += 1
+        if self.hang:
+            await asyncio.sleep(3600)
+        if self.delay:
+            await asyncio.sleep(self.delay)
         if self.broken:
             raise ConnectionResetError("cable pulled")
         if self.fail_next:
             self.fail_next = False
             raise ConnectionResetError("stale")
         self.calls.append(("set", lat, lon))
+        self.finished += 1
 
     async def clear(self):
         self.calls.append(("clear",))
 
     async def close(self):
+        if self.hang_close:
+            await asyncio.sleep(3600)
         self.closed = True
 
 
@@ -40,11 +54,18 @@ class FakeBackend:
         self.problem = problem
         self.sessions: list[FakeSession] = []
         self.trusted = 0
+        self.probes = 0                  # how many times the phone was probed
+        self.hang_probe = False
+        self.hang_open = False
+        self.open_delay = 0.0
         self.wifi_calls: list[bool] = []
         self.scans = 0
         self.scan_result: list[dict] = []
 
     async def probe(self):
+        self.probes += 1
+        if self.hang_probe:
+            await asyncio.sleep(3600)
         if self.problem:
             raise getattr(errors, self.problem)()
         return self.info
@@ -80,6 +101,10 @@ class FakeBackend:
         self.problem = None
 
     async def open_session(self, info):
+        if self.hang_open:
+            await asyncio.sleep(3600)
+        if self.open_delay:
+            await asyncio.sleep(self.open_delay)
         s = FakeSession(persists=info.major < 17)
         self.sessions.append(s)
         return s

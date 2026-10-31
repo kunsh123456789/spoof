@@ -56,3 +56,12 @@ def tunnel_needed() -> AppError:
         f"In a separate terminal, from the project folder, run:  {TUNNELD_CMD}  (leave it running), then try again.",
         status=503,
     )
+
+
+def timeout() -> AppError:
+    return AppError(
+        "connection_lost",
+        "The iPhone stopped answering.",
+        "Check the cable or Wi-Fi, and that the iPhone is awake and unlocked. The app will try again.",
+        status=503,
+    )

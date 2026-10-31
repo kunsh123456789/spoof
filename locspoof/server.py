@@ -21,7 +21,7 @@ from .geocode import Geocoder
 import httpx
 
 from .movement import point_in_polygon, polygon_area_m2, polygon_centroid, validate_coords
-from .offline import OfflineDownloader, OfflineStore, fetch_tile
+from .offline import PNG_SIGNATURE, OfflineDownloader, OfflineStore, fetch_tile, is_png
 from .recents import RecentsStore
 from .routes import RoutesStore
 from .routing import Router
@@ -259,7 +259,7 @@ def create_app(
 
     @app.delete("/api/journey")
     async def journey_stop(manager: DeviceManager = Depends(get_manager)):
-        return manager.stop_walk()
+        return await manager.stop_walk()
 
     @app.post("/api/trick-or-treat/plan")
     async def trick_or_treat_plan(body: TrickOrTreatRequest):
@@ -327,12 +327,15 @@ def create_app(
             return Response(status_code=404)
         path = offline.tile_path(z, x, y)
         if path.exists():
-            return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+            if is_png(path):
+                return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+            log.warning("removing a corrupt saved tile: %s", path)       # e.g. left by a crash; fetch it fresh instead
+            path.unlink(missing_ok=True)
         try:
             resp = await fetch_tile(tile_client, z, x, y)
         except httpx.HTTPError:
             return Response(status_code=404)
-        if resp.status_code != 200:
+        if resp.status_code != 200 or not resp.content.startswith(PNG_SIGNATURE):
             return Response(status_code=404)
         return Response(resp.content, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
 

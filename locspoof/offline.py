@@ -16,8 +16,10 @@ import heapq
 import json
 import logging
 import math
+import os
 import re
 import shutil
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -40,8 +42,39 @@ GAP_FILL_M = 200.0           # unroutable legs up to this long become straight s
 SNAP_MAX_M = 150.0           # a waypoint further than this from any street is "not covered"
 EST_TILE_KB = 18
 
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 BBox = tuple[float, float, float, float]  # south, west, north, east
 Point = tuple[float, float]
+
+
+# ---------------------------------------------------------------------------------------------
+# safe file writing
+# ---------------------------------------------------------------------------------------------
+
+def atomic_write(path: Path, data: bytes) -> None:
+    """Write a file so that it is either complete or absent: never half written (a crash, a full disk or a
+    power cut between the write and the rename leaves the old file, or nothing, in place)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def is_png(path: Path) -> bool:
+    """Is this a real (not truncated or replaced-by-a-web-page) PNG? Checks the signature only: cheap."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(8) == PNG_SIGNATURE
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------------------------
@@ -217,6 +250,23 @@ class OfflineStore:
         self.tiles_dir = self.root / "tiles"
         self._graphs: dict[str, RoadGraph] = {}
         self._houses: dict[str, list[Point]] = {}
+        self.cleanup_leftovers()
+
+    def cleanup_leftovers(self) -> None:
+        """Remove what an interrupted download left behind: unfinished pack folders and stray temp files.
+        (Runs at start-up, before any download can be running.)"""
+        try:
+            if self.packs_dir.exists():
+                for d in self.packs_dir.iterdir():
+                    if d.is_dir() and not (d / "pack.json").exists():
+                        log.info("removing the leftovers of an interrupted download: %s", d.name)
+                        shutil.rmtree(d, ignore_errors=True)
+            for base in (self.tiles_dir, self.packs_dir):
+                if base.exists():
+                    for tmp in base.rglob("*.tmp"):
+                        tmp.unlink(missing_ok=True)
+        except OSError:
+            log.warning("could not clean up leftover download files", exc_info=True)
 
     # -- metadata
     def list_packs(self) -> list[dict]:
@@ -241,7 +291,7 @@ class OfflineStore:
         return d
 
     def write_meta(self, pack_id: str, meta: dict) -> None:
-        (self.packs_dir / pack_id / "pack.json").write_text(json.dumps(meta), encoding="utf-8")
+        atomic_write(self.packs_dir / pack_id / "pack.json", json.dumps(meta).encode("utf-8"))
 
     def delete(self, pack_id: str) -> bool:
         if not re.fullmatch(r"[a-z0-9-]+", pack_id):
@@ -336,6 +386,7 @@ class OfflineStore:
 class OfflineDownloader:
     def __init__(self, store: OfflineStore, finder: HouseFinder, client: Optional[httpx.AsyncClient] = None, tile_delay: float = 0.3):
         self.store, self.finder, self._client, self.tile_delay = store, finder, client, tile_delay
+        self.retry_delay = 0.5
         self.job: dict = {"state": "idle"}
         self._task: Optional[asyncio.Task] = None
 
@@ -366,24 +417,23 @@ class OfflineDownloader:
             d = self.store.new_pack_dir(pack_id)
             self.job.update(stage="streets")
             roads = await self.finder.query_json(roads_query(bbox))
-            (d / "roads.json").write_text(json.dumps(roads), encoding="utf-8")
+            atomic_write(d / "roads.json", json.dumps(roads).encode("utf-8"))
             self.job.update(stage="houses")
             houses = dedupe(parse_points(await self.finder.query_json(houses_query(bbox))))
-            (d / "houses.json").write_text(json.dumps(houses), encoding="utf-8")
+            atomic_write(d / "houses.json", json.dumps(houses).encode("utf-8"))
             self.job.update(stage="map tiles", done=0)
             tiles, nbytes = tiles_for_bbox(bbox), 0
             failures = 0
             for i, (z, x, y) in enumerate(tiles, 1):
                 path = self.store.tile_path(z, x, y)
-                if not path.exists():
+                if not (path.exists() and is_png(path)):         # a leftover half-written tile is fetched again
                     data = await self._fetch_tile(z, x, y)
                     if data is None:
                         failures += 1
                         if failures > max(5, len(tiles) // 10):
                             raise AppError("tiles_failed", "Could not download the map tiles.", "Check your internet connection and try again.", 502)
                     else:
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        path.write_bytes(data)
+                        atomic_write(path, data)
                 if path.exists():
                     nbytes += path.stat().st_size
                 self.job["done"] = i
@@ -401,6 +451,10 @@ class OfflineDownloader:
         except Exception as e:
             log.exception("offline download failed")
             shutil.rmtree(self.store.packs_dir / pack_id, ignore_errors=True)
+            if isinstance(e, OSError):
+                full = getattr(e, "errno", None) in (28, 122)     # ENOSPC / EDQUOT
+                e = AppError("disk_error", "There is no space left on the disk." if full else f"Could not save the files ({e.strerror or e}).",
+                             "Free some space (or check the drive) and try again.", 507)
             err = e.to_dict() if isinstance(e, AppError) else {"code": "download_failed", "message": f"Download failed: {e}", "hint": None}
             self.job = {"state": "error", "error": err, "name": name}
 
@@ -408,12 +462,13 @@ class OfflineDownloader:
         for attempt in (1, 2):
             try:
                 resp = await fetch_tile(self._client, z, x, y)
-                if resp.status_code == 200 and resp.content:
+                if resp.status_code == 200 and resp.content.startswith(PNG_SIGNATURE):
                     return resp.content
-                log.warning("tile %d/%d/%d -> HTTP %s", z, x, y, resp.status_code)
+                # Not a PNG: an error page or a hotel/airport "log in to the Wi-Fi" page answering 200 OK.
+                log.warning("tile %d/%d/%d -> HTTP %s, %s", z, x, y, resp.status_code, resp.headers.get("content-type", "?"))
             except httpx.HTTPError as e:
                 log.warning("tile %d/%d/%d failed (attempt %d): %r", z, x, y, attempt, e)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(self.retry_delay)
         return None
 
 

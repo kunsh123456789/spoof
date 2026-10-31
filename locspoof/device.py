@@ -39,6 +39,14 @@ AMBIENT_TICK_S = 2.5
 RECONNECT_TIMEOUT_S = 600.0
 RECONNECT_POLL_S = 2.0
 MAX_PATH_POINTS = 20_000
+CALL_TIMEOUT_S = 12.0       # one location update; a phone that sleeps mid-call must never freeze the app
+PROBE_TIMEOUT_S = 20.0
+OPEN_TIMEOUT_S = 300.0      # opening a session can include mounting the disk image
+CLOSE_TIMEOUT_S = 5.0
+LIST_INFO_TTL_S = 60.0        # how long a phone's name/iOS version is reused when listing phones
+LIST_QUERY_TIMEOUT_S = 8.0
+STOP_GRACE_S = 3.0          # how long Stop waits for the update in flight before cancelling it
+HEALTHY_WINDOW_S = 6.0      # a device call succeeded this recently = the phone is fine, no need to probe it
 TRANSIENT_CODES = {"no_device", "connection_lost", "device_error", "usbmuxd_unavailable"}
 
 
@@ -218,6 +226,7 @@ class PmdBackend:
         self._last_problem: Optional[str] = None
         self._ddi_cache: Optional[tuple[float, Optional[bool]]] = None
         self._list_cache: Optional[tuple[float, list[dict]]] = None
+        self._info_cache: dict[tuple[str, str], tuple[float, dict]] = {}   # (serial, connection) -> (when, entry)
 
     # -- finding the phone --------------------------------------------------------------------
 
@@ -277,18 +286,26 @@ class PmdBackend:
         for key, f in _fresh_wifi().items():
             found.setdefault(key, _Target(f["udid"], "Wi-Fi", bonjour=True))
         out = []
+        now = time.monotonic()
         for key, t in found.items():
+            cached = self._info_cache.get((t.serial, t.connection))
+            if cached and now - cached[0] < LIST_INFO_TTL_S:        # don't re-handshake a phone we just looked at
+                out.append(dict(cached[1]))
+                continue
             entry = {"udid": t.serial, "name": "iPhone", "ios_version": "", "connection": t.connection, "paired": False}
             try:
-                ld = await self._lockdown(t)
+                ld = await asyncio.wait_for(self._lockdown(t), LIST_QUERY_TIMEOUT_S)
                 try:
                     entry.update(name=ld.all_values.get("DeviceName") or "iPhone", ios_version=ld.product_version, paired=bool(ld.paired))
                     entry["udid"] = ld.udid or t.serial
                 finally:
                     await ld.close()
-            except Exception as e:
+                self._info_cache[(t.serial, t.connection)] = (now, dict(entry))
+            except Exception as e:                                  # includes a phone that does not answer in time
                 log.debug("could not query %s: %r", t.serial, e)
             out.append(entry)
+        for k in [k for k in self._info_cache if k not in {(t.serial, t.connection) for t in found.values()}]:
+            del self._info_cache[k]                                 # forget phones that went away
         out.sort(key=lambda e: (e["connection"] != "USB", e["name"]))
         self._list_cache = (time.monotonic(), out)
         return out
@@ -577,6 +594,11 @@ class DeviceManager:
         self.settings: dict = settings if settings is not None else {}   # shared, live on/off switches
         self.memory = memory                                             # DeviceMemory (optional)
         self.reconnect_timeout, self.reconnect_poll = RECONNECT_TIMEOUT_S, RECONNECT_POLL_S
+        self.call_timeout, self.probe_timeout, self.open_timeout = CALL_TIMEOUT_S, PROBE_TIMEOUT_S, OPEN_TIMEOUT_S
+        self.close_timeout, self.stop_grace, self.healthy_window = CLOSE_TIMEOUT_S, STOP_GRACE_S, HEALTHY_WINDOW_S
+        self._last_ok = 0.0                                    # when a device call last succeeded
+        self._last_base: Optional[dict] = None                 # the last "ready"/error part of status
+        self._stop_requested = False                           # asks the running trip to stop at a safe point
         self._rng = rng or random.Random()
         self._noise = NoiseModel(rng=self._rng)
         self._route_points: list[list[float]] = []
@@ -607,21 +629,37 @@ class DeviceManager:
 
     # -- status -----------------------------------------------------------------------------
 
+    def _healthy(self) -> bool:
+        """A session is open and a call to the phone worked a moment ago: the phone is demonstrably fine."""
+        return (self._session is not None and self._info is not None and self._last_base is not None
+                and self._last_base.get("state") == "ready" and time.monotonic() - self._last_ok < self.healthy_window)
+
     async def status(self, force: bool = False) -> dict:
         now = time.monotonic()
         if not force and self._status_cache and now - self._status_cache[0] < STATUS_CACHE_S:
             return {**self._status_cache[1], **self._sim_state()}
+        if not force and self._healthy():
+            # Skip the handshake: it would only compete with the trip for the phone (slow on Wi-Fi).
+            return {**self._last_base, **self._sim_state()}       # type: ignore[arg-type]
+        if self._lock.locked() and not force:
+            # Something slow is using the phone (opening a session, mounting the disk image...): answer at once.
+            base = self._last_base or {"state": "connecting", "device": None, "error": None, "warnings": []}
+            return {**base, **self._sim_state()}
         async with self._lock:
             try:
-                info = await self.backend.probe()
+                info = await asyncio.wait_for(self.backend.probe(), self.probe_timeout)
                 base = {"state": "ready", "device": info.to_dict(), "error": None, "warnings": self._warnings(info)}
                 self._info = info
                 if self._lost and self._position and self._on("auto_reconnect") and not self._journey_active():
                     await self._restore_position()
+            except asyncio.TimeoutError:
+                log.warning("the phone did not answer the status check within %.0f s", self.probe_timeout)
+                base = {"state": "connection_lost", "device": None, "error": errors.timeout().to_dict(), "warnings": []}
             except AppError as e:
                 base = {"state": e.code, "device": None, "error": e.to_dict(), "warnings": []}
                 if e.code == "no_device":
                     await self._device_gone()
+        self._last_base = base
         self._status_cache = (time.monotonic(), base)
         return {**base, **self._sim_state()}
 
@@ -709,27 +747,37 @@ class DeviceManager:
 
     async def _drop_session(self) -> None:
         session, self._session = self._session, None
+        self._last_ok = 0.0
         if session is not None:
             try:
-                await session.close()
+                await asyncio.wait_for(session.close(), self.close_timeout)
+            except asyncio.TimeoutError:
+                log.warning("closing the old phone session took too long; abandoning it")
             except Exception:
                 log.exception("error while closing session")
 
     async def _ensure_session(self) -> LocationSession:
         if self._session is None:
-            info = await self.backend.probe()  # raises friendly errors (no device / trust / dev mode)
+            info = await asyncio.wait_for(self.backend.probe(), self.probe_timeout)  # friendly errors: no device / trust / dev mode
             self._info = info
-            self._session = await self.backend.open_session(info)
+            self._session = await asyncio.wait_for(self.backend.open_session(info), self.open_timeout)
         return self._session
 
     async def _run(self, action: Callable[[LocationSession], Awaitable[None]]) -> None:
-        """Run an action on the session; on failure reconnect once (stale USB/tunnel connections)."""
+        """Run an action on the session; on failure reconnect once (stale USB/tunnel connections).
+
+        Every step is time-limited: a phone that goes to sleep mid-call must not keep the device lock forever.
+        """
         last: Optional[BaseException] = None
         for attempt in (1, 2):
             try:
                 session = await self._ensure_session()
-                await action(session)
+                await asyncio.wait_for(action(session), self.call_timeout)
+                self._last_ok = time.monotonic()
                 return
+            except asyncio.TimeoutError:
+                log.warning("the phone did not answer within the time limit (attempt %d)", attempt)
+                last = errors.timeout()
             except AppError as e:
                 if e.code in ("no_device", "not_trusted", "developer_mode_off", "tunnel_needed", "device_locked"):
                     await self._drop_session()
@@ -763,12 +811,13 @@ class DeviceManager:
                 self._lost = True
                 self._walk["state"] = "reconnecting"
                 await asyncio.sleep(self.reconnect_poll)
+                self._check_stop()
 
     # -- public operations ------------------------------------------------------------------
 
     async def set_location(self, lat: float, lon: float) -> dict:
         validate_coords(lat, lon)
-        self._cancel_walk()
+        await self._stop_journey()
         prev = self._position
         async with self._lock:
             await self._run(lambda s: s.set(lat, lon))
@@ -781,7 +830,7 @@ class DeviceManager:
         return self._sim_state()
 
     async def clear_location(self) -> dict:
-        self._cancel_walk()
+        await self._stop_journey()
         self._cancel_ambient()
         async with self._lock:
             had_session = self._session is not None
@@ -805,7 +854,7 @@ class DeviceManager:
         return self._info is None or self._info.major < 17
 
     async def shutdown(self) -> None:
-        self._cancel_walk()
+        await self._stop_journey()
         self._cancel_ambient()
         async with self._lock:
             await self._drop_session()
@@ -824,21 +873,45 @@ class DeviceManager:
     async def _ambient_loop(self) -> None:
         while True:
             await asyncio.sleep(self.ambient_tick)
-            if not (self._on("noise") and self._position and not self._journey_active() and self._session and not self._lost):
-                continue
-            lat, lon = self._noise.apply(*self._position, self.ambient_tick)
             try:
+                if not (self._on("noise") and self._position and not self._journey_active() and self._session and not self._lost):
+                    continue
+                lat, lon = self._noise.apply(*self._position, self.ambient_tick)
                 async with self._lock:
                     if self._position and not self._journey_active():
                         await self._run(lambda s: s.set(lat, lon))
+            except asyncio.CancelledError:
+                raise
             except AppError as e:
                 log.debug("ambient noise update skipped: %s", e.code)
                 if e.code in TRANSIENT_CODES and self._on("auto_reconnect") and not self._persists():
                     self._lost = True
             except Exception:
-                log.exception("ambient noise update failed")
+                log.exception("ambient noise update failed")      # keep going: this loop must never die
 
     # -- journeys (single destination, multi-stop routes, GPX tracks, trick-or-treat) -----------
+
+    async def _stop_journey(self) -> None:
+        """Stop the running trip at a safe point: let the update in flight finish (cutting a call to the phone in
+        half could leave its connection confused), and only cancel hard if the phone is not answering."""
+        task = self._walk_task
+        if task is not None and not task.done():
+            self._stop_requested = True
+            try:
+                done, _ = await asyncio.wait({task}, timeout=self.stop_grace)
+                if not done:
+                    log.warning("the trip did not stop within %.0f s; cancelling it", self.stop_grace)
+                    task.cancel()
+                    await asyncio.wait({task}, timeout=2.0)
+            finally:
+                self._stop_requested = False
+        self._walk_task = None
+        self._walk = {}
+        self._route_points = []
+
+    def _check_stop(self) -> None:
+        if self._stop_requested:
+            raise asyncio.CancelledError()
 
     def _cancel_walk(self) -> None:
         if self._walk_task and not self._walk_task.done():
@@ -884,7 +957,7 @@ class DeviceManager:
             raise AppError(
                 "no_start", "Set a starting location first.", "Use \"Set Location\" once, then start moving from there.", 409
             )
-        self._cancel_walk()
+        await self._stop_journey()
 
         first_dwell, first_target = 0.0, 0
         if plan.jump_to_first:
@@ -975,9 +1048,9 @@ class DeviceManager:
         self._walk["speed_kmh"] = speed_kmh
         return self._sim_state()
 
-    def stop_walk(self) -> dict:
+    async def stop_walk(self) -> dict:
         """Stop moving but stay at the current simulated position."""
-        self._cancel_walk()
+        await self._stop_journey()
         return self._sim_state()
 
     async def _journey_loop(self, plan: "JourneyPlan", first_dwell: float, legs: "list[_Leg]", cycle: "list[_Leg]") -> None:
@@ -1005,6 +1078,7 @@ class DeviceManager:
         pace = WalkModel(self._rng)
         self._walk.update(state="moving", stop=leg.index + 1, wait_left_s=0.0, returning=leg.returning, reason=None)
         while True:
+            self._check_stop()
             speed = leg.speed_kmh or self._walk["speed_kmh"]      # a leg's own speed beats the live slider
             natural = 1.0
             if self._on("natural_walk"):
@@ -1024,6 +1098,7 @@ class DeviceManager:
                         self._walk.update(state="moving", reason=None)
                         break
             await asyncio.sleep(self.walk_tick)
+            self._check_stop()
 
     async def _dwell(self, seconds: float, reason: Optional[str] = None) -> None:
         self._walk.update(state="waiting", wait_left_s=seconds, remaining_m=0.0, reason=reason)
@@ -1031,6 +1106,7 @@ class DeviceManager:
         while (left := end - time.monotonic()) > 0:
             self._walk["wait_left_s"] = left
             await asyncio.sleep(min(self.walk_tick, left))
+            self._check_stop()
         self._walk["wait_left_s"] = 0.0
 
 

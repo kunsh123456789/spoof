@@ -39,11 +39,15 @@
     if (body !== undefined) headers["Content-Type"] = opts.raw ? "application/gpx+xml" : "application/json";
     if (device) headers["X-Device"] = device;                       // which phone this request is about
     let res;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), opts.timeout || 60000);   // a stuck request must never wedge the buttons
     try {
-      res = await fetch(path, { method, headers, body: body === undefined ? undefined : (opts.raw ? body : JSON.stringify(body)) });
+      res = await fetch(path, { method, headers, signal: ctl.signal, body: body === undefined ? undefined : (opts.raw ? body : JSON.stringify(body)) });
     } catch (e) {
-      throw { message: "Cannot reach the local server.", hint: "Is the app still running in Terminal?" };
-    }
+      throw e && e.name === "AbortError"
+        ? { message: "The app did not answer in time.", hint: "It may be busy talking to the iPhone. Wait a moment and try again." }
+        : { message: "Cannot reach the local server.", hint: "Is the app still running? Quit it and open it again." };
+    } finally { clearTimeout(timer); }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw data.error || (Array.isArray(data.detail) ? { message: "Invalid input.", hint: data.detail[0]?.msg } : { message: `Error ${res.status}` });
     return data;
@@ -587,6 +591,7 @@
       state = "simulating"; title = w.state === "done" ? "Finished — simulating" : "Simulating";
       detail = `${fmt4(sim.lat)}, ${fmt4(sim.lon)}`;
     }
+    if (s.state === "connecting" && state === "idle") { title = "Connecting to the iPhone…"; detail = "This can take a minute the first time (the disk image is mounted)."; state = "reconnecting"; }
     $("now").dataset.state = state; $("nowTitle").textContent = title; $("nowDetail").textContent = detail;
     $("stopBtn").hidden = !w.active; $("clearBtn").hidden = !sim.active;
     $("returnBtn").hidden = !(sim.origin && !w.active && haversine(sim.origin, [sim.lat, sim.lon]) > 3);   // not when already at the start
@@ -605,6 +610,8 @@
       const wifi = $("wifiSwitch"); wifi.checked = !!d.wifi_enabled; wifi.disabled = d.connection !== "USB" || d.wifi_enabled === null;
       $("wifiSmall").textContent = d.connection !== "USB" ? "Connected over Wi-Fi. Plug in a cable to change this."
         : "Turn this on while the phone is plugged in, then you can unplug it.";
+    } else if (s.state === "connecting") {
+      $("deviceText").textContent = "Connecting…"; chip.title = "Talking to the iPhone (mounting the disk image can take a minute)"; banner.hidden = true;
     } else {
       $("deviceText").textContent = s.error?.message || "Not ready"; chip.title = "Phones & connection";
       $("bannerMsg").textContent = s.error?.message || ""; $("bannerHint").textContent = s.error?.hint || "";

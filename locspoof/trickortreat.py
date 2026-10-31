@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 import time
 from typing import Optional
 
@@ -123,6 +124,7 @@ class HouseFinder:
         self.offline = offline            # OfflineStore (fallback when Overpass is unreachable)
         self.last_source = "online"
         self.last_notes: list[str] = []
+        self.retry_delays = (3.0,)        # extra rounds over both servers after a pause
         self._min_interval = min_interval
         self._lock = asyncio.Lock()
         self._last = 0.0
@@ -136,7 +138,7 @@ class HouseFinder:
             points = await self._fetch(lat, lon, radius_m, polygon)
             self.last_source = "online"
         except AppError as e:
-            saved = self.offline.houses_near(lat, lon, radius_m, polygon) if (self.offline and e.code == "houses_unavailable") else []
+            saved = (await asyncio.to_thread(self.offline.houses_near, lat, lon, radius_m, polygon)) if (self.offline and e.code == "houses_unavailable") else []
             if not saved:
                 raise
             log.info("Overpass unreachable; using %d houses from offline data", len(saved))
@@ -171,34 +173,51 @@ class HouseFinder:
         try:
             return BusyRoads(parse_busy_roads(await self.query_json(busy_query(lat, lon, radius_m, polygon))), origin)
         except AppError:
-            lines = self.offline.busy_roads(lat, lon, polygon) if self.offline else None
+            lines = (await asyncio.to_thread(self.offline.busy_roads, lat, lon, polygon)) if self.offline else None
             return BusyRoads(lines, origin) if lines is not None else None
 
     async def _fetch(self, lat: float, lon: float, radius_m: int, polygon: Optional[Polygon] = None) -> list[Point]:
         return parse_points(await self.query_json(build_query(lat, lon, radius_m, polygon)))
 
     async def query_json(self, query: str) -> dict:
-        """Run an Overpass query (trying the mirror too) and return the parsed JSON."""
+        """Run an Overpass query and return the parsed JSON.
+
+        Tries both servers, then again after a pause (the free servers are often busy). An answer that says it was
+        cut short ("Query timed out", "out of memory") is rejected: using it would silently drop houses or streets.
+        """
         last_err = "no response"
         async with self._lock:
-            for url in OVERPASS_URLS:
-                wait = self._last + self._min_interval - time.monotonic()
-                if wait > 0:
-                    await asyncio.sleep(wait)
-                try:
-                    resp = await self._post(url, query)
-                except httpx.HTTPError as e:
-                    last_err = repr(e)
-                    continue
-                finally:
-                    self._last = time.monotonic()
-                if resp.status_code == 200:
+            for rnd in range(len(self.retry_delays) + 1):
+                for url in OVERPASS_URLS:
+                    wait = self._last + self._min_interval - time.monotonic()
+                    if wait > 0:
+                        await asyncio.sleep(wait)
                     try:
-                        return resp.json()
+                        resp = await self._post(url, query)
+                    except httpx.HTTPError as e:
+                        last_err = repr(e)
+                        continue
+                    finally:
+                        self._last = time.monotonic()
+                    if resp.status_code != 200:
+                        last_err = f"HTTP {resp.status_code}"
+                        continue
+                    try:
+                        data = resp.json()
                     except ValueError:
                         last_err = "invalid JSON"
                         continue
-                last_err = f"HTTP {resp.status_code}"
+                    remark = str(data.get("remark", "")) if isinstance(data, dict) else ""
+                    if remark and re.search(r"timed out|out of memory|runtime error", remark, re.I):
+                        last_err = f"partial answer: {remark[:80]}"
+                        continue
+                    if not isinstance(data, dict):
+                        last_err = "unexpected answer"
+                        continue
+                    return data
+                if rnd < len(self.retry_delays):
+                    log.info("Overpass is busy (%s); trying again shortly", last_err)
+                    await asyncio.sleep(self.retry_delays[rnd])
         log.error("Overpass failed: %s", last_err)
         raise AppError(
             "houses_unavailable",

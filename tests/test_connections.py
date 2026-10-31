@@ -160,14 +160,14 @@ def test_one_phone_unplugged_does_not_affect_the_other(two_phones):
     c.post("/api/location", json={"lat": 1, "lon": 1}, headers=hdr("00008110-AAAA"))
     c.post("/api/location", json={"lat": 2, "lon": 2}, headers=hdr("00008120-BBBB"))
     c.a.unplug()                                    # Alice runs iOS 17: her simulation dies with the cable -> will be restored
-    time.sleep(2.1)
+    time.sleep(6.6)   # an idle phone that worked a moment ago is trusted for ~6 s before it is probed again
     sa = c.get("/api/status", headers=hdr("00008110-AAAA")).json()
     sb = c.get("/api/status", headers=hdr("00008120-BBBB")).json()
     assert sa["state"] == "no_device" and sa["simulation"]["active"] and sa["simulation"]["reconnecting"] is True
     assert sb["state"] == "ready" and sb["simulation"]["active"] and "reconnecting" not in sb["simulation"]
     c.a.replug()
     c.b.unplug()                                    # Bob runs iOS 15: the phone itself keeps the fake location, nothing to restore
-    time.sleep(2.1)
+    time.sleep(6.6)   # an idle phone that worked a moment ago is trusted for ~6 s before it is probed again
     sa = c.get("/api/status", headers=hdr("00008110-AAAA")).json()
     sb = c.get("/api/status", headers=hdr("00008120-BBBB")).json()
     assert sa["state"] == "ready" and "reconnecting" not in sa["simulation"] and sa["simulation"]["lat"] == 1
@@ -415,3 +415,47 @@ def test_ddi_check_is_cached_and_failure_means_unknown(monkeypatch):
 
     monkeypatch.setattr("pymobiledevice3.services.mobile_image_mounter.MobileImageMounterService", Broken)
     assert run(PmdBackend()._ddi_mounted(object())) is None
+
+
+# ---- listing phones must not re-handshake every phone every few seconds --------------------------------
+
+def test_list_devices_reuses_recent_answers_and_forgets_removed_phones(fake_usbmux, monkeypatch):
+    fake_usbmux["devices"] = [mux("AAA", "USB"), mux("BBB", "Network")]
+    be = PmdBackend()
+    asked = []
+
+    async def _lockdown(target, autopair=False):
+        asked.append(target.serial)
+        return FakeLockdown(udid=target.serial, name=f"Phone {target.serial}")
+
+    monkeypatch.setattr(be, "_lockdown", _lockdown)
+    assert [d["name"] for d in run(be.list_devices())] == ["Phone AAA", "Phone BBB"] and sorted(asked) == ["AAA", "BBB"]
+    be._list_cache = None                                       # the 4 s list cache expired, the 60 s info cache did not
+    run(be.list_devices())
+    assert sorted(asked) == ["AAA", "BBB"]                       # nothing was queried again
+    fake_usbmux["devices"].append(mux("CCC", "USB"))             # a new phone: only that one is queried
+    be._list_cache = None
+    assert len(run(be.list_devices())) == 3 and sorted(asked) == ["AAA", "BBB", "CCC"]
+    fake_usbmux["devices"] = [mux("AAA", "USB")]                 # others unplugged: forgotten, so a replug is re-queried
+    be._list_cache = None
+    run(be.list_devices())
+    assert set(k[0] for k in be._info_cache) == {"AAA"}
+    for k in list(be._info_cache):                               # entries expire after the TTL
+        be._info_cache[k] = (be._info_cache[k][0] - dev.LIST_INFO_TTL_S - 1, be._info_cache[k][1])
+    be._list_cache = None
+    run(be.list_devices())
+    assert asked.count("AAA") == 2
+
+
+def test_a_phone_that_never_answers_still_appears_in_the_list(fake_usbmux, monkeypatch):
+    fake_usbmux["devices"] = [mux("SLOW", "Network")]
+    be = PmdBackend()
+
+    async def _lockdown(target, autopair=False):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(be, "_lockdown", _lockdown)
+    monkeypatch.setattr(dev, "LIST_QUERY_TIMEOUT_S", 0.2)
+    t = time.monotonic()
+    out = run(be.list_devices())
+    assert time.monotonic() - t < 3 and out[0]["udid"] == "SLOW" and out[0]["name"] == "iPhone" and out[0]["paired"] is False
