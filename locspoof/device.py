@@ -191,7 +191,9 @@ class PmdBackend:
             serial = await self._find_serial()
             lockdown = await self._lockdown(serial)
             try:
-                if not await lockdown.validate_pairing():
+                # create_using_usbmux() already validated the pairing and opened the session; calling
+                # validate_pairing() again makes the phone answer "a lockdown session is already active".
+                if not lockdown.paired:
                     raise errors.not_trusted()
                 info = DeviceInfo(
                     udid=serial,
@@ -229,7 +231,7 @@ class PmdBackend:
             serial = await self._find_serial()
             lockdown = await self._lockdown(serial, autopair=False)
             try:
-                if not await lockdown.validate_pairing():
+                if not lockdown.paired:
                     await lockdown.pair(timeout=60)
             finally:
                 await lockdown.close()
