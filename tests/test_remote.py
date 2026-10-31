@@ -193,3 +193,35 @@ def test_the_mac_lists_tailscale_addresses_first_and_a_tailscale_client_still_ne
     assert far.get("/api/status").status_code == 401 and far.get("/remote").status_code == 200
     h = pair(mac, far)
     assert far.get("/api/status", headers=h).status_code == 200 and far.get("/api/settings", headers=h).status_code == 403
+
+
+# ---- telling the phones apart ----
+def test_paired_phones_show_who_is_online_where_and_can_be_renamed(mac):
+    import locspoof.remote as rm
+    a, b = phone(mac), TestClient(mac.app, client=("100.100.5.5", 4000))
+    ha = pair(mac, a, "Kunsh's iPad")
+    hb = pair(mac, b, "Remote iPhone")
+    a.get("/api/remote/me", headers=ha)
+    b.get("/api/remote/me", headers=hb)
+    devs = {d["name"]: d for d in mac.get("/api/remote").json()["devices"]}
+    assert devs["Kunsh's iPad"]["online"] and devs["Kunsh's iPad"]["via"] == "wifi" and devs["Kunsh's iPad"]["ip"] == "192.168.1.50"
+    assert devs["Remote iPhone"]["online"] and devs["Remote iPhone"]["via"] == "tailscale"
+    st = mac.app.state                                              # time passes with no requests: shown as not connected
+    store_ids = [d["id"] for d in mac.get("/api/remote").json()["devices"]]
+    assert len(store_ids) == 2
+    mac.patch(f"/api/remote/devices/{devs['Remote iPhone']['id']}", json={"name": "  Away   phone "})
+    assert "Away phone" in [d["name"] for d in mac.get("/api/remote").json()["devices"]]
+    assert mac.patch(f"/api/remote/devices/{store_ids[0]}", json={"name": "  "}).status_code == 422
+    assert mac.patch("/api/remote/devices/nope", json={"name": "x"}).status_code == 404
+    assert a.patch(f"/api/remote/devices/{store_ids[0]}", json={"name": "hacked"}, headers=ha).status_code == 403      # only from the Mac
+
+
+def test_a_phone_that_went_quiet_is_not_online(tmp_path):
+    clock = {"t": 100.0}
+    s = RemoteStore(tmp_path / "x.json", clock=lambda: clock["t"])
+    code = s.new_code()["code"]
+    token = s.pair(code, "P")
+    s.verify(token, "192.168.0.9")
+    assert s.listing()[0]["online"] is True
+    clock["t"] += 30
+    assert s.listing()[0]["online"] is False and s.listing()[0]["last_seen"] == 100.0

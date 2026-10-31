@@ -257,7 +257,7 @@ def create_app(
             return await call_next(request)
         if not settings.data.get("remote_enabled"):
             return JSONResponse({"error": {"code": "remote_off", "message": "The phone remote is off.", "hint": None}}, status_code=403)
-        bad = check_request(remote_store, request.method, request.url.path, request.headers.get("authorization", ""), request.query_params.get("t", ""))
+        bad = check_request(remote_store, request.method, request.url.path, request.headers.get("authorization", ""), request.query_params.get("t", ""), host)
         if bad:
             return JSONResponse({"error": {"code": "forbidden" if bad[0] == 403 else "unauthorized", "message": bad[1], "hint": bad[2]}}, status_code=bad[0])
         return await call_next(request)
@@ -611,6 +611,14 @@ def create_app(
     async def list_devices(fresh: bool = False):
         return {"devices": await decorated_devices(fresh)}
 
+    @app.post("/api/devices/{udid}/developer-mode")
+    async def enable_developer_mode(udid: str):
+        """Reveal the Developer Mode switch on a phone (iOS 16+) and ask it to turn the mode on."""
+        out = await fleet.enable_developer_mode(udid)
+        name = next((d["name"] for d in await fleet.devices(fresh=True) if norm_udid(d["udid"]) == norm_udid(udid)), "iPhone")
+        activity.add("🛠 Developer Mode: %s on %s" % ({"already_on": "already on", "restarting": "turning on (the phone restarts)", "manual": "switch revealed (turn it on in Settings)"}[out["state"]], name), kind="phone")
+        return out
+
     @app.patch("/api/devices/{udid}")
     async def patch_device(udid: str, body: dict):
         """Rename a phone ({"nickname": "Mum's phone"}, "" = back to its own name) and/or star it ({"favorite": true})."""
@@ -732,6 +740,12 @@ def create_app(
     @app.delete("/api/remote/devices/{device_id}")
     async def remote_revoke(device_id: str):
         if not remote_store.revoke(device_id):
+            raise AppError("not_found", "That phone is not paired.", status=404)
+        return {"ok": True}
+
+    @app.patch("/api/remote/devices/{device_id}")
+    async def remote_rename(device_id: str, body: dict):
+        if not remote_store.rename(device_id, str(body.get("name", ""))):
             raise AppError("not_found", "That phone is not paired.", status=404)
         return {"ok": True}
 

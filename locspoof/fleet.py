@@ -42,6 +42,13 @@ class Fleet:
             out.append(entry)
         return out
 
+    async def enable_developer_mode(self, udid: Optional[str] = None) -> dict:
+        """Ask a phone to reveal / enable its Developer Mode switch (a one-off connection to that phone)."""
+        backend = self._single.backend if self._single else self._backend_for(udid)
+        out = await backend.enable_developer_mode()
+        self._list_cache = None
+        return out
+
     async def scan_wifi(self) -> list[dict]:
         found = await self.discovery.scan_wifi()
         self._list_cache = None

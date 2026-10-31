@@ -85,7 +85,18 @@ class FakeBackend:
         if self.problem == "no_device":
             return []
         i = self.info
-        return [{"udid": i.udid, "name": i.name, "ios_version": i.ios_version, "connection": i.connection, "paired": True}]
+        return [{"udid": i.udid, "name": i.name, "ios_version": i.ios_version, "connection": i.connection, "paired": True,
+                 "developer_mode": self.developer_mode}]
+
+    developer_mode = True               # what the fake phone reports
+    developer_result = {"state": "restarting"}
+    developer_calls = 0
+
+    async def enable_developer_mode(self):
+        self.developer_calls = self.developer_calls + 1
+        if isinstance(self.developer_result, Exception):
+            raise self.developer_result
+        return dict(self.developer_result)
 
     async def scan_wifi(self, timeout=5.0):
         self.scans += 1

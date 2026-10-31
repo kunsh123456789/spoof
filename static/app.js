@@ -169,6 +169,7 @@
     if (name === "saved") loadPanic();
     if (name === "schedule") { loadSchedules(); loadRoutes(); }
     if (name === "activity") loadActivity();
+    if (name === "phones") { loadDevices(true); loadRemoteTab(); }
     if (name === "place") renderSetup();
     document.querySelector(".body")?.scrollTo?.({ top: 0 });
   }
@@ -298,6 +299,7 @@
     await api("DELETE", "/api/location"); centeredOnSim = false; clearRoute(); toast("Simulation stopped — real GPS restored.");
   });
   $("stopBtn").onclick = (ev) => guarded(ev.currentTarget, async () => { await api("DELETE", "/api/journey"); clearRoute(); toast("Stopped. The phone stays at its current spot."); });
+  $("devBtn").onclick = () => { const d = devices.find((x) => normUdid(x.udid) === normUdid(device)) || devices[0]; showTab("phones"); if (d) enableDeveloperMode(d); };
   $("trustBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     toast("Look at your iPhone and tap Trust (enter your passcode if asked)…", 8000);
     await api("POST", "/api/trust");
@@ -334,6 +336,7 @@
       el.onclick = () => selectDevice(d.udid);
       return el;
     }) : (missing ? [] : [li("No phones found. Plug one in, or see Wi-Fi setup below.")])));
+    renderPhonesTab();
     otherLayer.clearLayers();
     devices.filter((d) => d.simulating && normUdid(d.udid) !== normUdid(device)).forEach((d) =>
       L.marker([d.lat, d.lon], { icon: L.divIcon({ className: "", html: '<div class="other-phone"></div>', iconSize: [14, 14] }), interactive: false })
@@ -351,6 +354,67 @@
     input.onclick = (e) => e.stopPropagation(); input.onblur = () => finish(true);
     row.replaceChildren(input); input.focus(); input.select();
   }
+  // ---------- the Phones tab: which phone is being controlled, and which phones are the remotes ----------
+  function renderPhonesTab() {
+    if (tab !== "phones") return;
+    $("tpPhones").replaceChildren(...(devices.length ? devices.map((d) => {
+      const sel = normUdid(d.udid) === normUdid(device), shown = d.display_name || d.name;
+      const el = li(`${d.favorite ? "★ " : ""}${shown}${d.nickname ? ` (${d.name})` : ""}`);
+      const info = document.createElement("small"); info.className = "muted sub";
+      info.textContent = `iOS ${d.ios_version || "?"} · ${d.offline ? "not connected" : d.connection === "USB" ? "🔌 cable" : "📶 Wi-Fi"}${d.developer_mode === true ? " · 🛠 Developer Mode on" : d.developer_mode === false ? " · 🛠 Developer Mode OFF" : ""}${d.simulating ? " · ● fake location on" : ""}${d.moving ? " · moving" : ""}`;
+      el.querySelector(".name").append(document.createElement("br"), info);
+      if (sel) { const b = document.createElement("span"); b.className = "badge on"; b.textContent = "▶ controlling"; el.append(b); }
+      if (d.developer_mode === false && !d.offline) { const b = miniBtn("🛠 Enable Developer Mode", "This phone needs Developer Mode to be controlled", () => enableDeveloperMode(d)); b.classList.add("devbtn"); el.append(b); }
+      el.append(miniBtn(d.favorite ? "★" : "☆", "Favorite", () => patchPhone(d, { favorite: !d.favorite })), miniBtn("✎", "Rename this phone", () => renamePhone(el, d)));
+      if (d.offline) el.classList.add("phone-off");
+      el.title = sel ? "This is the phone the app is controlling" : "Click to control this phone"; el.onclick = () => selectDevice(d.udid);
+      return el;
+    }) : [li("No iPhone found. Plug one in (or see Wi-Fi setup in the phone chip).")]));
+  }
+  const DEV_HELP = {
+    restarting: ["🔁 The iPhone is restarting.", "When it is back on: unlock it, tap “Turn On” on the “Turn On Developer Mode?” prompt, and enter the passcode. Then come back here: the phone should show “Developer Mode on”."],
+    manual: ["✋ Turn it on yourself on the iPhone.", "Because the phone has a passcode, iOS only allows this by hand. The switch is now visible: Settings → Privacy & Security → Developer Mode → On. The phone restarts; confirm “Turn On” and enter the passcode."],
+    already_on: ["✅ Developer Mode is already on.", "Nothing to do. If the app still can't control the phone, unplug it, plug it back in and unlock it."],
+  };
+  async function enableDeveloperMode(d) {
+    if (!confirm(`Enable Developer Mode on “${d.display_name || d.name}”?\n\nThe iPhone may restart. Keep it plugged in and unlocked, and be ready to enter its passcode.`)) return;
+    try {
+      toast("Talking to the iPhone…", 6000);
+      const r = await api("POST", `/api/devices/${encodeURIComponent(d.udid)}/developer-mode`, undefined, { timeout: 40000 }), [title, body] = DEV_HELP[r.state] || ["Done.", ""];
+      $("tpDevHelp").hidden = false; $("tpDevHelp").replaceChildren(Object.assign(document.createElement("b"), { textContent: title }), document.createElement("br"), body);
+      loadDevices(true);
+    } catch (e) { fail(e); }
+  }
+  let remoteTabTimer = null;
+  async function loadRemoteTab() {
+    clearTimeout(remoteTabTimer);
+    if (tab !== "phones") return;
+    let r; try { r = await api("GET", "/api/remote"); } catch { remoteTabTimer = setTimeout(loadRemoteTab, 4000); return; }
+    $("tpRemoteOff").hidden = r.enabled; $("tpPair").hidden = !r.enabled; $("tpUrl").hidden = !r.enabled;
+    const best = r.urls.find((u) => u.kind === "tailscale") || r.urls[0];
+    $("tpUrl").textContent = best ? `Remote address: ${best.url}` : "";
+    $("tpCode").textContent = r.code ? `${r.code.code}  ·  ${Math.max(1, Math.round(r.code.expires_in / 60))} min` : "";
+    $("tpRemotes").replaceChildren(...(r.enabled ? (r.devices.length ? r.devices : []).map((d) => {
+      const el = li(`${d.online ? "🟢" : "⚪"} ${d.name}`);
+      const info = document.createElement("small"); info.className = "muted sub";
+      info.textContent = d.online ? `connected now · ${d.via === "tailscale" ? "🌍 Tailscale" : "🏠 home Wi-Fi"}` : `not connected${d.last_seen ? " · last seen " + new Date(d.last_seen * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}`;
+      el.querySelector(".name").append(document.createElement("br"), info);
+      el.append(miniBtn("✎", "Rename this remote", () => renameRemote(el, d)),
+        miniBtn("✕", `Forget ${d.name}`, async () => { if (!confirm(`Forget “${d.name}”? It will have to pair again.`)) return; try { await api("DELETE", `/api/remote/devices/${d.id}`); loadRemoteTab(); } catch (e) { fail(e); } }));
+      return el;
+    }) : []));
+    if (r.enabled && !r.devices.length) $("tpRemotes").append(li("No remote phones paired yet. Press “New pairing code”."));
+    remoteTabTimer = setTimeout(loadRemoteTab, 3000);
+  }
+  function renameRemote(row, d) {
+    const input = document.createElement("input"); input.value = d.name; input.maxLength = 40; input.className = "phonename"; input.setAttribute("aria-label", "Remote phone name"); let done = false;
+    const finish = async (save) => { if (done) return; done = true; const v = input.value.trim();
+      if (save && v && v !== d.name) { try { await api("PATCH", `/api/remote/devices/${d.id}`, { name: v }); } catch (e) { fail(e); } } loadRemoteTab(); };
+    input.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") finish(true); else if (e.key === "Escape") finish(false); };
+    input.onclick = (e) => e.stopPropagation(); input.onblur = () => finish(true); row.replaceChildren(input); input.focus(); input.select();
+  }
+  $("tpPair").onclick = async () => { try { await api("POST", "/api/remote/code"); loadRemoteTab(); } catch (e) { fail(e); } };
+  $("tpRemoteOn").onclick = async () => { try { settings = await api("PATCH", "/api/settings", { remote_enabled: true }); applySettings(); loadRemoteTab(); } catch (e) { fail(e); } };
   function selectDevice(udid) {
     if (normUdid(udid) === normUdid(device)) return;
     device = udid; store.set("device", udid);
@@ -1134,6 +1198,7 @@
       $("deviceText").textContent = s.error?.message || "Not ready"; chip.title = "Phones & connection";
       $("bannerMsg").textContent = s.error?.message || ""; $("bannerHint").textContent = s.error?.hint || "";
       $("trustBtn").hidden = s.state !== "not_trusted"; banner.hidden = false;
+      $("devBtn").hidden = s.error?.code !== "developer_mode_off";
     }
     const warns = s.warnings || [];                          // e.g. a leftover fake location AND an unmounted disk image
     $("notice").hidden = !warns.length;
@@ -1198,7 +1263,7 @@
       const tag = document.createElement("span"); tag.className = "badge"; tag.textContent = u.kind === "tailscale" ? "🌍 anywhere" : "🏠 home Wi-Fi"; el.append(tag); return el; }) : [li("Could not find this Mac's address. Is it on Wi-Fi?")]));
     $("remoteAway").hidden = !!(r.tailscale && r.tailscale.running);
     $("remoteCode").textContent = r.code ? `${r.code.code}  ·  ${Math.max(1, Math.round(r.code.expires_in / 60))} min` : "";
-    $("remoteDevices").replaceChildren(...(r.devices.length ? r.devices.map((d) => li(`${d.name}${d.last_seen ? " · seen " + new Date(d.last_seen * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}`)).map((el, i) => (el.append(miniBtn("✕", `Forget ${r.devices[i].name}`, async () => { if (!confirm(`Forget “${r.devices[i].name}”? It will have to pair again.`)) return; try { await api("DELETE", `/api/remote/devices/${r.devices[i].id}`); loadRemote(); } catch (e) { fail(e); } })), el)) : [li("No phones paired yet.")]));
+    $("remoteDevices").replaceChildren(...(r.devices.length ? r.devices.map((d) => li(`${d.online ? "🟢 " : ""}${d.name}${d.last_seen ? " · seen " + new Date(d.last_seen * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}`)).map((el, i) => (el.append(miniBtn("✕", `Forget ${r.devices[i].name}`, async () => { if (!confirm(`Forget “${r.devices[i].name}”? It will have to pair again.`)) return; try { await api("DELETE", `/api/remote/devices/${r.devices[i].id}`); loadRemote(); } catch (e) { fail(e); } })), el)) : [li("No phones paired yet.")]));
   }
   $("remoteCodeBtn").onclick = async () => { try { await api("POST", "/api/remote/code"); loadRemote(); } catch (e) { fail(e); } };
   new MutationObserver(() => { clearInterval(remoteTimer); if (!$("settingsPop").hidden) { loadRemote(); remoteTimer = setInterval(loadRemote, 3000); } }).observe($("settingsPop"), { attributes: true, attributeFilter: ["hidden"] });
@@ -1253,7 +1318,7 @@
   document.addEventListener("locspoof:status", () => { if (tab === "place") renderSetup(); });
 
   // ---------- command palette ----------
-  const TABS = [["place", "📍", "Place"], ["move", "🚶", "Move"], ["tot", "🎃", "Trick or treat"], ["schedule", "⏰", "Schedule"], ["saved", "⭐", "Saved"], ["offline", "📥", "Offline"], ["activity", "📜", "Activity"]];
+  const TABS = [["place", "📍", "Place"], ["move", "🚶", "Move"], ["tot", "🎃", "Trick or treat"], ["schedule", "⏰", "Schedule"], ["saved", "⭐", "Saved"], ["offline", "📥", "Offline"], ["phones", "📱", "Phones"], ["activity", "📜", "Activity"]];
   async function patchSetting(key, value) { try { settings = await api("PATCH", "/api/settings", { [key]: value }); applySettings(); toast(`${key.replace(/_/g, " ")}: ${value ? "on" : "off"}`); } catch (e) { fail(e); } }
   const act = (btn) => () => { const b = $(btn); if (b && !b.hidden && !b.disabled) b.click(); else toast("That isn't available right now."); };
   const commands = () => {
@@ -1338,7 +1403,7 @@
 
   showLayer(ui.layer); applyTheme();
   { const w = Number(store.get("ui.panelw")); if (w) setPanelWidth(w); }
-  showTab(["place", "move", "tot", "schedule", "saved", "offline", "activity"].includes(store.get("tab")) ? store.get("tab") : "place");
+  showTab(["place", "move", "tot", "schedule", "saved", "offline", "activity", "phones"].includes(store.get("tab")) ? store.get("tab") : "place");
   if (store.get("ui.collapsed") === "1" && !isMobile()) setPanelCollapsed(true);
   pinLine(); loadPanic(); loadFavs(); loadRecent(); loadRoutes(); renderStops(); renderArea(); showGpx();
 })();

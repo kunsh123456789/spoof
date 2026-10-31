@@ -106,6 +106,7 @@ class Backend(Protocol):
     async def set_wifi(self, enabled: bool) -> None: ...
     async def list_devices(self) -> list[dict]: ...
     async def scan_wifi(self, timeout: float = 5.0) -> list[dict]: ...
+    async def enable_developer_mode(self) -> dict: ...
 
 
 # ---------------------------------------------------------------------------------------------
@@ -307,6 +308,12 @@ class PmdBackend:
                 try:
                     entry.update(name=ld.all_values.get("DeviceName") or "iPhone", ios_version=ld.product_version, paired=bool(ld.paired))
                     entry["udid"] = ld.udid or t.serial
+                    entry["developer_mode"] = None                  # True / False, or None = unknown or not applicable (before iOS 16)
+                    try:
+                        if ld.paired and int(str(ld.product_version).split(".")[0]) >= 16:
+                            entry["developer_mode"] = bool(await asyncio.wait_for(ld.get_developer_mode_status(), 4))
+                    except Exception as e:
+                        log.debug("developer mode status unknown for %s: %r", t.serial, e)
                 finally:
                     await ld.close()
                 self._info_cache[(t.serial, t.connection)] = (now, dict(entry))
@@ -419,6 +426,43 @@ class PmdBackend:
             raise
         except Exception as e:
             log.exception("trust failed")
+            raise translate_exception(e) from e
+
+    async def enable_developer_mode(self) -> dict:
+        """Make the Developer Mode switch appear on the phone and ask it to turn the mode on.
+
+        Returns {"state": "already_on" | "restarting" | "manual"}:
+        * restarting: the phone is restarting; after it boots it asks "Turn On Developer Mode?" and the user must confirm (and enter the passcode).
+        * manual: the phone has a passcode, so iOS does not allow turning it on from the computer. The switch is now visible in Settings.
+        """
+        from pymobiledevice3 import exceptions as E
+        from pymobiledevice3.services.amfi import AmfiService
+
+        try:
+            target = await self._resolve()
+            lockdown = await self._lockdown(target)
+            try:
+                if not lockdown.paired:
+                    raise errors.not_trusted()
+                if int(str(lockdown.product_version).split(".")[0]) < 16:
+                    raise AppError("no_developer_mode", "This iPhone does not have a Developer Mode switch.",
+                                   "Only iOS 16 and later need it; this phone is fine as it is.", 409)
+                if await lockdown.get_developer_mode_status():
+                    return {"state": "already_on"}
+                amfi = AmfiService(lockdown)
+                await amfi.reveal_developer_mode_option_in_ui()
+                try:
+                    await amfi.enable_developer_mode(enable_post_restart=False)
+                except E.DeviceHasPasscodeSetError:
+                    return {"state": "manual"}
+                return {"state": "restarting"}
+            finally:
+                await lockdown.close()
+                self._info_cache.clear()
+        except AppError:
+            raise
+        except Exception as e:
+            log.exception("enable_developer_mode failed")
             raise translate_exception(e) from e
 
     async def set_wifi(self, enabled: bool) -> None:

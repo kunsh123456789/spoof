@@ -329,7 +329,7 @@ kbd { font: 600 11.5px ui-monospace, Menlo, monospace; padding: 2px 6px; border-
 #setupCard li.bad b { color: var(--danger); }
 
 /* ---- small screens: tabs become a bottom bar, the progress dock sits under the top bar ---- */
-@media (max-width: 1100px) { #tabs button .tl { display: none; } #tabs button { padding: 8px 10px; } .hide-md { display: none !important; } }
+@media (max-width: 1340px) { #tabs button .tl { display: none; } #tabs button { padding: 8px 10px; } .hide-md { display: none !important; } }
 @media (max-width: 760px) {
   :root { --panel-w: 100vw; --nav-h: 58px; }
   #brand span, .hide-sm { display: none !important; }
@@ -394,3 +394,10 @@ kbd { font: 600 11.5px ui-monospace, Menlo, monospace; padding: 2px 6px; border-
 
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; word-break: break-all; }
 .bigcode { font-size: 22px; letter-spacing: .12em; font-variant-numeric: tabular-nums; }
+
+.list li .sub { font-size: 12px; font-weight: 500; }
+.badge.on { background: var(--accent); color: var(--accent-text, #fff); }
+
+.list li .devbtn { background: #f59e0b; color: #1a1200; border-color: #d97706; white-space: nowrap; }
+#tpPhones li, #tpRemotes li { flex-wrap: wrap; }
+#tpPhones li .name, #tpRemotes li .name { flex: 1 1 100%; white-space: normal; }

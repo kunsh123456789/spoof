@@ -326,3 +326,26 @@ def test_an_unplugged_favorite_phone_is_still_listed_first(tmp_path):
         devs = c.get("/api/devices").json()["devices"]
         assert devs[0]["display_name"] == "Spare" and devs[0]["offline"] is True and devs[0]["favorite"]
         assert devs[1]["offline"] is False
+
+
+# ---- Developer Mode ----
+def test_the_phone_list_shows_developer_mode_and_it_can_be_enabled(tmp_path):
+    backend = FakeBackend()
+    backend.developer_mode = False
+    app = create_app(backend=backend, router=FakeRouter(), house_finder=FakeHouses(), favorites_path=tmp_path / "f.json",
+                     recents_path=tmp_path / "r.json", offline_root=tmp_path / "o", settings_path=tmp_path / "s.json",
+                     routes_path=tmp_path / "rt.json", devices_path=tmp_path / "d.json", schedules_path=tmp_path / "sch.json",
+                     activity_path=tmp_path / "act.json", panic_path=tmp_path / "p.json")
+    with TestClient(app) as c:
+        phone = c.get("/api/devices").json()["devices"][0]
+        assert phone["developer_mode"] is False
+        for state in ("restarting", "manual", "already_on"):
+            backend.developer_result = {"state": state}
+            r = c.post(f"/api/devices/{phone['udid']}/developer-mode")
+            assert r.status_code == 200 and r.json() == {"state": state}
+        assert backend.developer_calls == 3
+        texts = [e["text"] for e in c.get("/api/activity").json()["events"]]
+        assert any("Developer Mode" in t and "turn it on in Settings" in t for t in texts)
+        from locspoof.errors import AppError
+        backend.developer_result = AppError("no_developer_mode", "No switch.", "Only iOS 16+.", 409)
+        assert c.post(f"/api/devices/{phone['udid']}/developer-mode").status_code == 409

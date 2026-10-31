@@ -35,6 +35,7 @@ LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 CODE_TTL_S = 600
 MAX_WRONG_GUESSES = 5
 LOCK_S = 60
+ONLINE_S = 12            # a paired phone counts as connected if it talked to the Mac in the last few seconds (the remote polls every 1-3 s)
 
 # What a paired phone may do: (method, path regex)
 ALLOWED = [(m, re.compile(p)) for m, p in [
@@ -71,6 +72,7 @@ class RemoteStore:
         self._code: Optional[dict] = None
         self._locked_until = 0.0
         self._seen: dict[str, float] = {}
+        self._live: dict[str, tuple[float, str]] = {}      # id -> (last request time, address it came from): who is connected right now
         try:
             d = json.loads(self.path.read_text(encoding="utf-8"))
             self.devices: list[dict] = [x for x in d if isinstance(x, dict) and {"id", "hash", "name"} <= x.keys()]
@@ -117,7 +119,7 @@ class RemoteStore:
             self._save()
             return token
 
-    def verify(self, token: str) -> Optional[dict]:
+    def verify(self, token: str, ip: str = "") -> Optional[dict]:
         if not token:
             return None
         h = _hash(token)
@@ -125,6 +127,7 @@ class RemoteStore:
             for d in self.devices:
                 if hmac.compare_digest(d["hash"], h):
                     now = self.clock()
+                    self._live[d["id"]] = (now, ip)
                     if now - self._seen.get(d["id"], 0) > 30:          # don't rewrite the file on every request
                         self._seen[d["id"]] = now
                         d["last_seen"] = now
@@ -141,19 +144,38 @@ class RemoteStore:
             self._save()
             return True
 
+    def rename(self, device_id: str, name: str) -> bool:
+        name = " ".join(str(name).split())[:40]
+        if not name:
+            raise AppError("bad_name", "Give the phone a name.", status=422)
+        with self._lock:
+            for d in self.devices:
+                if d["id"] == device_id:
+                    d["name"] = name
+                    self._save()
+                    return True
+        return False
+
     def listing(self) -> list[dict]:
         with self._lock:
-            return [{"id": d["id"], "name": d["name"], "created": d["created"], "last_seen": d.get("last_seen")} for d in self.devices]
+            now = self.clock()
+            out = []
+            for d in self.devices:
+                at, ip = self._live.get(d["id"], (0.0, ""))
+                via = "tailscale" if ip.startswith("100.") and 64 <= int((ip.split(".") + ["0"] * 4)[1] or 0) <= 127 else ("wifi" if ip else "")
+                out.append({"id": d["id"], "name": d["name"], "created": d["created"], "last_seen": max(at, d.get("last_seen") or 0) or None,
+                            "online": bool(at and now - at < ONLINE_S), "ip": ip, "via": via})
+            return out
 
 
-def check_request(store: RemoteStore, method: str, path: str, auth: str, query_token: str) -> Optional[tuple[int, str, str]]:
+def check_request(store: RemoteStore, method: str, path: str, auth: str, query_token: str, ip: str = "") -> Optional[tuple[int, str, str]]:
     """None = allowed; otherwise (status, message, hint) for a request that came from the network."""
     if any(m == method and p.match(path) for m, p in PUBLIC):
         return None
     token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
     if not token and TILES.match(path):
         token = query_token                                       # map tiles are <img> requests, which cannot send a header
-    if not store.verify(token):
+    if not store.verify(token, ip):
         return 401, "Not paired.", "Open the remote page and enter the pairing code shown on the Mac."
     if TILES.match(path) and method == "GET":
         return None

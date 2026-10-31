@@ -148,7 +148,8 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
 ### Handy extras
 
 * **Command palette**: `Ctrl/⌘ K`, then type anything: a tab, *stop*, *restore*, *dark*, a favorite, a saved route, or an address to search.
-* **Shortcuts** (press `?` to see them all): `1`–`7` tabs · `Space` stop moving · `R` restore real GPS · `B` return to start · `\` hide/show the side card · `/` search · `C` crosshair (precise pin) · `L` centre on the phone · `M` next map style · `,` settings.
+* **Shortcuts** (press `?` to see them all): `1`–`8` tabs · `Space` stop moving · `R` restore real GPS · `B` return to start · `\` hide/show the side card · `/` search · `C` crosshair (precise pin) · `L` centre on the phone · `M` next map style · `,` settings.
+* **📱 Phones** tab: two clearly separate lists. **iPhones on this Mac** (the phones whose location is changed: cable or Wi-Fi, favorite, rename, which one is being controlled, and whether **Developer Mode** is on) and **Remote controls** (the other phones that control the app: 🟢 connected now, over home Wi-Fi or Tailscale, rename, forget). A new iPhone (iOS 16+) with Developer Mode off shows a **🛠 Enable Developer Mode** button: it makes the switch appear on the phone and asks it to turn on. The phone restarts and you confirm “Turn On” on it; a phone with a passcode must be switched on by hand (Settings → Privacy & Security → Developer Mode), and the app says so.
 * **⚙ Settings** (top right): light / dark / auto, accent colour, seasonal themes on/off, map style (street, satellite, topo), **Fun mode**, the setup checklist and a reset.
 * **📜 Activity** tab: a log of what happened and when (phone connected, location set, trips, schedule steps, Mac asleep…).
 * Seasonal themes switch themselves on: orange for Halloween in October, snowy in December, hearts in February (turn off in Settings). Trick-or-treat always turns the app orange.
