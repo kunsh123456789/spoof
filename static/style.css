@@ -68,3 +68,38 @@ button.secondary { flex: none; }
     padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
   #toast { bottom: calc(54vh + 8px); }
 }
+
+/* ---- path toggle, sections, lists ---- */
+.seg { display: flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 10px; }
+.segbtn { flex: 1; border: none; border-radius: 0; background: var(--bg); font-size: 13px; padding: 8px 4px; }
+.segbtn + .segbtn { border-left: 1px solid var(--border); }
+.segbtn.active { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+details[open] summary { margin-bottom: 6px; }
+.full { width: 100%; margin-top: 10px; }
+.gap { margin-top: 8px; }
+.opts { margin-top: 10px; align-items: flex-end; }
+.check { display: flex; align-items: center; gap: 6px; color: var(--text); flex: none; }
+.check input { width: auto; }
+.stops { counter-reset: s; }
+.stops li { cursor: default; }
+.stops li .name { font-variant-numeric: tabular-nums; }
+.miniBtn { border: none; background: none; color: var(--muted); padding: 2px 6px; font-size: 15px; }
+.miniBtn:hover { color: var(--accent); }
+.linkbtn { border: none; background: none; color: var(--muted); font-size: 12px; text-transform: none; letter-spacing: 0; padding: 0 4px; float: right; }
+.num-marker { background: var(--accent); color: var(--accent-text); width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center; font-weight: 700; font-size: 12px; border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+.pumpkin { font-size: 20px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); text-align: center; }
+.route-line { filter: none; }
+
+/* ---- Halloween (trick-or-treat) theme ---- */
+:root[data-theme="halloween"] {
+  --accent: #ff7a00; --accent-text: #1a0d00; --bg: #fff3e6; --panel: #fffaf4; --border: #f2cfa5; --text: #2b1600; --muted: #8a5a2b;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="halloween"] { --bg: #1f1208; --panel: #2a1a0b; --border: #5a3512; --text: #ffe9d1; --muted: #d7a56e; --accent: #ff8a1f; }
+}
+:root[data-theme="halloween"] #panel { border-color: var(--accent); box-shadow: 0 8px 30px rgba(255,122,0,.35); }
+:root[data-theme="halloween"] h1::before { content: "🎃 "; }
+:root[data-theme="halloween"] input[type="range"], :root[data-theme="halloween"] input[type="checkbox"] { accent-color: var(--accent); }
+:root[data-theme="halloween"] .sim-marker { background: #ff7a00; box-shadow: 0 0 0 4px rgba(255,122,0,.4); }

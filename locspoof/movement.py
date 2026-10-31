@@ -43,3 +43,40 @@ def step_towards(
     y = a * math.cos(p1) * math.sin(l1) + b * math.cos(p2) * math.sin(l2)
     z = a * math.sin(p1) + b * math.sin(p2)
     return math.degrees(math.atan2(z, math.hypot(x, y))), math.degrees(math.atan2(y, x)), False
+
+
+class PathFollower:
+    """Walks a polyline [(lat, lon), ...] by distance; handles steps that span several vertices."""
+
+    def __init__(self, points: list[tuple[float, float]]):
+        if not points:
+            raise ValueError("A path needs at least one point.")
+        self.points = [tuple(p) for p in points]
+        self.pos = self.points[0]
+        self._next = 1
+        self._remaining = sum(haversine_m(*a, *b) for a, b in zip(self.points, self.points[1:]))
+
+    @property
+    def remaining_m(self) -> float:
+        return max(self._remaining, 0.0)
+
+    @property
+    def done(self) -> bool:
+        return self._next >= len(self.points)
+
+    def advance(self, distance_m: float) -> tuple[float, float, bool]:
+        """Move ``distance_m`` along the path. Returns (lat, lon, done)."""
+        while distance_m > 0 and not self.done:
+            target = self.points[self._next]
+            seg = haversine_m(*self.pos, *target)
+            if seg <= distance_m:
+                distance_m -= seg
+                self._remaining -= seg
+                self.pos = target
+                self._next += 1
+            else:
+                lat, lon, _ = step_towards(*self.pos, *target, distance_m)
+                self._remaining -= distance_m
+                self.pos = (lat, lon)
+                distance_m = 0
+        return self.pos[0], self.pos[1], self.done

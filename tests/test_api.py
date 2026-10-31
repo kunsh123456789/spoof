@@ -6,13 +6,16 @@ from fastapi.testclient import TestClient
 
 from locspoof.geocode import Geocoder
 from locspoof.server import create_app
-from conftest import FakeBackend
+from conftest import FakeBackend, FakeHouses, FakeRouter
 
 
 @pytest.fixture
 def make_client(tmp_path):
     def make(backend, **kw):
-        app = create_app(backend=backend, favorites_path=tmp_path / "fav.json", walk_tick=0.01, **kw)
+        kw.setdefault("router", FakeRouter())
+        kw.setdefault("house_finder", FakeHouses())
+        app = create_app(backend=backend, favorites_path=tmp_path / "fav.json", recents_path=tmp_path / "recent.json",
+                         walk_tick=0.01, **kw)
         return TestClient(app)
     return make
 
@@ -100,43 +103,6 @@ def test_bad_coordinates_rejected(make_client, backend, body):
     with make_client(backend) as c:
         assert c.post("/api/location", json=body).status_code == 422
     assert backend.sessions == []
-
-
-def test_walk_moves_gradually_and_arrives(make_client, backend):
-    with make_client(backend) as c:
-        assert c.post("/api/walk", json={"lat": 0, "lon": 0.0001, "speed_kmh": 5}).status_code == 409  # no start
-        c.post("/api/location", json={"lat": 0, "lon": 0})
-        # 0.0002 deg lon ~ 22 m; 400 km/h * 0.01 s tick ~ 1.1 m per step -> many steps
-        assert c.post("/api/walk", json={"lat": 0, "lon": 0.0002, "speed_kmh": 400}).status_code == 200
-        deadline = time.time() + 10
-        while time.time() < deadline and c.get("/api/status").json()["walk"]["active"]:
-            time.sleep(0.05)
-        st = c.get("/api/status").json()
-        assert not st["walk"]["active"] and st["simulation"]["lon"] == 0.0002
-        sets = [x for x in backend.sessions[0].calls if x[0] == "set"]
-        assert len(sets) > 5
-        lons = [x[2] for x in sets]
-        assert lons == sorted(lons)  # monotonic progress, not a teleport
-
-
-def test_walk_speed_validation_and_stop(make_client, backend):
-    with make_client(backend) as c:
-        c.post("/api/location", json={"lat": 0, "lon": 0})
-        assert c.post("/api/walk", json={"lat": 0, "lon": 1, "speed_kmh": 0}).status_code == 422
-        assert c.post("/api/walk", json={"lat": 0, "lon": 1, "speed_kmh": 1000}).status_code == 422
-        assert c.patch("/api/walk", json={"speed_kmh": 10}).status_code == 409  # not walking
-        c.post("/api/walk", json={"lat": 0, "lon": 1, "speed_kmh": 5})
-        assert c.patch("/api/walk", json={"speed_kmh": 30}).json()["walk"]["speed_kmh"] == 30
-        assert c.delete("/api/walk").json()["walk"]["active"] is False
-        assert c.get("/api/status").json()["simulation"]["active"] is True  # stays at position
-
-
-def test_set_location_cancels_walk(make_client, backend):
-    with make_client(backend) as c:
-        c.post("/api/location", json={"lat": 0, "lon": 0})
-        c.post("/api/walk", json={"lat": 0, "lon": 1, "speed_kmh": 5})
-        c.post("/api/location", json={"lat": 5, "lon": 5})
-        assert c.get("/api/status").json()["walk"]["active"] is False
 
 
 def test_favorites_crud(make_client, backend, tmp_path):

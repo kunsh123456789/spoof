@@ -12,7 +12,7 @@
 
   <aside id="panel">
     <header>
-      <h1>iPhone Location</h1>
+      <h1 id="title">iPhone Location</h1>
       <div id="device" class="chip" data-state="loading"><span class="dot"></span><span id="deviceText">Checking…</span></div>
     </header>
 
@@ -43,7 +43,12 @@
     </section>
 
     <section>
-      <h2>Walk / drive here</h2>
+      <h2>Move gradually</h2>
+      <div class="seg" role="radiogroup" aria-label="Path type">
+        <button class="segbtn" data-mode="straight" role="radio">Straight line</button>
+        <button class="segbtn active" data-mode="walk" role="radio">Walking path</button>
+        <button class="segbtn" data-mode="drive" role="radio">Driving path</button>
+      </div>
       <label class="speed">Speed <output id="speedOut">5</output> km/h
         <input id="speed" type="range" min="1" max="120" step="1" value="5">
       </label>
@@ -60,12 +65,59 @@
     </section>
 
     <section>
+      <details id="routeBox">
+        <summary>Multi-stop route</summary>
+        <p class="muted">Add several stops; the phone visits them in order using the path type and speed above.</p>
+        <div class="row">
+          <button id="addStopBtn" class="secondary">Add pin as stop</button>
+          <button id="clearStopsBtn" class="secondary">Clear stops</button>
+        </div>
+        <ol id="stops" class="list stops"></ol>
+        <div class="row opts">
+          <label>Pause at each stop (s) <input id="dwell" type="number" min="0" max="900" value="0"></label>
+          <label class="check"><input id="loop" type="checkbox"> Loop</label>
+        </div>
+        <button id="routeBtn" class="primary full">Start route</button>
+      </details>
+    </section>
+
+    <section id="totSection">
+      <details id="totBox">
+        <summary>🎃 Trick or treat</summary>
+        <label class="check switch"><input id="totOn" type="checkbox"> Trick-or-treat mode (orange theme)</label>
+        <div id="totBody" hidden>
+          <p class="muted">Finds houses around the pin on OpenStreetMap and visits them one by one on foot, pausing at each door.</p>
+          <label class="speed">Search radius <output id="radiusOut">350</output> m
+            <input id="radius" type="range" min="150" max="900" step="50" value="350">
+          </label>
+          <label class="speed">Houses <output id="housesOut">20</output>
+            <input id="houses" type="range" min="5" max="40" step="1" value="20">
+          </label>
+          <div class="row">
+            <button id="findBtn" class="secondary">Find houses near pin</button>
+          </div>
+          <p id="totInfo" class="muted"></p>
+          <button id="totStartBtn" class="primary full" disabled>Start trick-or-treating</button>
+          <p class="muted">Starts at the first house (the phone jumps there), then walks street to street at a natural pace with random pauses.</p>
+        </div>
+      </details>
+    </section>
+
+    <section>
       <h2>Favorites</h2>
-      <form id="favForm" class="row">
-        <input id="favName" placeholder="Name for current pin" maxlength="80" aria-label="Favorite name">
-        <button type="submit" class="secondary">Save</button>
+      <form id="favForm">
+        <div class="row">
+          <input id="favName" placeholder="Name" maxlength="80" aria-label="Favorite name">
+          <button type="submit" class="secondary">Save</button>
+        </div>
+        <input id="favWhere" placeholder="Place or lat, lon (blank = current pin)" aria-label="Favorite location" class="gap">
       </form>
       <ul id="favs" class="list"></ul>
+    </section>
+
+    <section>
+      <h2>Recent <button id="clearRecent" class="linkbtn">clear</button></h2>
+      <ul id="recent" class="list"></ul>
     </section>
   </aside>
 

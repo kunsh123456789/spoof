@@ -14,7 +14,9 @@ Key facts about the two simulation methods:
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
+import random
 import time
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -22,12 +24,15 @@ from typing import Any, Awaitable, Callable, Optional, Protocol
 
 from . import errors
 from .errors import AppError
-from .movement import step_towards, haversine_m, validate_coords
+from .movement import PathFollower, validate_coords
 
 log = logging.getLogger("locspoof.device")
 
 WALK_TICK_S = 1.0
 MIN_SPEED_KMH, MAX_SPEED_KMH = 0.5, 400.0
+MAX_STOPS = 60
+MAX_DWELL_S = 900.0
+MODES = ('straight', 'walk', 'drive')
 STATUS_CACHE_S = 2.0
 
 
@@ -345,9 +350,14 @@ class PmdBackend:
 # ---------------------------------------------------------------------------------------------
 
 class DeviceManager:
-    def __init__(self, backend: Backend, walk_tick: float = WALK_TICK_S):
+    def __init__(
+        self, backend: Backend, walk_tick: float = WALK_TICK_S,
+        on_finish: Optional[Callable[[float, float], None]] = None,
+    ):
         self.backend = backend
         self.walk_tick = walk_tick
+        self.on_finish = on_finish  # called with the final position when a journey completes
+        self._route_points: list[list[float]] = []
         self._lock = asyncio.Lock()
         self._session: Optional[LocationSession] = None
         self._info: Optional[DeviceInfo] = None
@@ -469,30 +479,86 @@ class DeviceManager:
         async with self._lock:
             await self._drop_session()
 
-    # -- walking ----------------------------------------------------------------------------
+    # -- journeys (single destination, multi-stop routes, trick-or-treat) ---------------------
 
     def _cancel_walk(self) -> None:
         if self._walk_task and not self._walk_task.done():
             self._walk_task.cancel()
         self._walk_task = None
         self._walk = {}
+        self._route_points = []
 
-    async def start_walk(self, lat: float, lon: float, speed_kmh: float) -> dict:
-        validate_coords(lat, lon)
-        speed_kmh = self._check_speed(speed_kmh)
-        if self._position is None:
+    @staticmethod
+    def _check_speed(speed_kmh: float) -> float:
+        if not (MIN_SPEED_KMH <= speed_kmh <= MAX_SPEED_KMH):
+            raise AppError("bad_speed", f"Speed must be between {MIN_SPEED_KMH} and {MAX_SPEED_KMH} km/h.", status=422)
+        return float(speed_kmh)
+
+    def route_points(self) -> list[list[float]]:
+        return self._route_points if self._walk_task and not self._walk_task.done() else []
+
+    async def start_journey(self, plan: "JourneyPlan", router: Any = None) -> dict:
+        """Follow the stops in order from the current simulated position (straight lines or road routes)."""
+        stops = plan.stops
+        if not 1 <= len(stops) <= MAX_STOPS:
+            raise AppError("bad_stops", f"A route needs 1 to {MAX_STOPS} stops.", status=422)
+        for st in stops:
+            validate_coords(st.lat, st.lon)
+            if not 0 <= st.dwell_s <= MAX_DWELL_S:
+                raise AppError("bad_dwell", f"Pause at a stop must be 0-{int(MAX_DWELL_S)} seconds.", status=422)
+        if plan.mode not in MODES:
+            raise AppError("bad_mode", "Mode must be straight, walk or drive.", status=422)
+        if not 0 <= plan.speed_jitter <= 0.5:
+            raise AppError("bad_jitter", "Speed variation must be between 0 and 0.5.", status=422)
+        speed = self._check_speed(plan.speed_kmh)
+        if self._position is None and not plan.jump_to_first:
             raise AppError(
-                "no_start", "Set a starting location first.", "Use \"Set Location\" once, then walk from there.", 409
+                "no_start", "Set a starting location first.", "Use \"Set Location\" once, then start moving from there.", 409
             )
         self._cancel_walk()
-        self._walk = {"dest": [lat, lon], "speed_kmh": speed_kmh, "remaining_m": haversine_m(*self._position, lat, lon)}
-        self._walk_task = asyncio.create_task(self._walk_loop(lat, lon))
+
+        first_dwell, first_target = 0.0, 0
+        if plan.jump_to_first:
+            await self.set_location(stops[0].lat, stops[0].lon)
+            first_dwell, first_target = stops[0].dwell_s, 1
+        origin = self._position
+        assert origin is not None
+        targets = stops[first_target:]
+
+        legs = await self._build_legs(
+            [origin] + [(t.lat, t.lon) for t in targets],
+            [first_target + i for i in range(len(targets))],
+            [t.dwell_s for t in targets],
+            plan.mode, router,
+        )
+        cycle: list[_Leg] = []
+        if plan.loop and len(stops) >= 2:
+            ring = [stops[-1]] + stops  # last -> first -> ... -> last, repeated forever
+            cycle = await self._build_legs(
+                [(t.lat, t.lon) for t in ring], list(range(len(stops))), [t.dwell_s for t in stops], plan.mode, router
+            )
+
+        self._route_points = [[lat, lon] for leg in legs for lat, lon in leg.points]
+        self._walk = {
+            "kind": plan.kind, "mode": plan.mode, "speed_kmh": speed, "loop": bool(cycle), "total": len(stops),
+            "stop": first_target, "state": "moving", "remaining_m": 0.0, "wait_left_s": 0.0,
+        }
+        self._walk_task = asyncio.create_task(self._journey_loop(plan, first_dwell, legs, cycle))
         return self._sim_state()
+
+    async def _build_legs(self, waypoints, indices, dwells, mode, router) -> "list[_Leg]":
+        if len(waypoints) < 2:
+            return []
+        if mode == "straight":
+            polylines = [[a, b] for a, b in zip(waypoints, waypoints[1:])]
+        else:
+            polylines = await router.route(waypoints, mode)
+        return [_Leg(pl, idx, d) for pl, idx, d in zip(polylines, indices, dwells)]
 
     def set_walk_speed(self, speed_kmh: float) -> dict:
         speed_kmh = self._check_speed(speed_kmh)
         if not (self._walk_task and not self._walk_task.done()):
-            raise AppError("no_walk", "Not currently walking.", status=409)
+            raise AppError("no_walk", "Not currently moving.", status=409)
         self._walk["speed_kmh"] = speed_kmh
         return self._sim_state()
 
@@ -501,29 +567,69 @@ class DeviceManager:
         self._cancel_walk()
         return self._sim_state()
 
-    @staticmethod
-    def _check_speed(speed_kmh: float) -> float:
-        if not (MIN_SPEED_KMH <= speed_kmh <= MAX_SPEED_KMH):
-            raise AppError("bad_speed", f"Speed must be between {MIN_SPEED_KMH} and {MAX_SPEED_KMH} km/h.", status=422)
-        return float(speed_kmh)
-
-    async def _walk_loop(self, dest_lat: float, dest_lon: float) -> None:
+    async def _journey_loop(self, plan: "JourneyPlan", first_dwell: float, legs: "list[_Leg]", cycle: "list[_Leg]") -> None:
         try:
-            while True:
-                lat, lon = self._position  # type: ignore[misc]
-                speed_mps = self._walk["speed_kmh"] / 3.6
-                nlat, nlon, arrived = step_towards(lat, lon, dest_lat, dest_lon, speed_mps * self.walk_tick)
-                async with self._lock:
-                    await self._run(lambda s: s.set(nlat, nlon))
-                    self._position = (nlat, nlon)
-                self._walk["remaining_m"] = haversine_m(nlat, nlon, dest_lat, dest_lon)
-                if arrived:
-                    log.info("walk finished at %.6f, %.6f", nlat, nlon)
-                    return
-                await asyncio.sleep(self.walk_tick)
+            if first_dwell:
+                self._walk["stop"] = 1
+                await self._dwell(first_dwell)
+            for leg in itertools.chain(legs, itertools.cycle(cycle) if cycle else ()):
+                await self._follow(leg, plan.speed_jitter)
+                if leg.dwell_s:
+                    await self._dwell(leg.dwell_s)
+            self._walk.update(state="done", remaining_m=0.0, wait_left_s=0.0)
+            if self._position and self.on_finish:
+                self.on_finish(*self._position)
+            log.info("journey finished")
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            log.exception("walk aborted")
-            err = translate_exception(e)
-            self._walk["error"] = err.to_dict()
+            log.exception("journey aborted")
+            self._walk["error"] = translate_exception(e).to_dict()
+
+    async def _follow(self, leg: "_Leg", jitter: float) -> None:
+        follower = PathFollower(leg.points)
+        factor = 1 + random.uniform(-jitter, jitter) if jitter else 1.0
+        self._walk.update(state="moving", stop=leg.index + 1, wait_left_s=0.0)
+        while True:
+            step_m = self._walk["speed_kmh"] / 3.6 * factor * self.walk_tick
+            lat, lon, done = follower.advance(step_m)
+            async with self._lock:
+                await self._run(lambda s: s.set(lat, lon))
+                self._position = (lat, lon)
+            self._walk["remaining_m"] = follower.remaining_m
+            if done:
+                return
+            await asyncio.sleep(self.walk_tick)
+
+    async def _dwell(self, seconds: float) -> None:
+        self._walk.update(state="waiting", wait_left_s=seconds, remaining_m=0.0)
+        end = time.monotonic() + seconds
+        while (left := end - time.monotonic()) > 0:
+            self._walk["wait_left_s"] = left
+            await asyncio.sleep(min(self.walk_tick, left))
+        self._walk["wait_left_s"] = 0.0
+
+
+@dataclass
+class Stop:
+    lat: float
+    lon: float
+    dwell_s: float = 0.0
+
+
+@dataclass
+class JourneyPlan:
+    stops: list[Stop]
+    mode: str = "walk"            # straight | walk | drive
+    speed_kmh: float = 5.0
+    loop: bool = False
+    jump_to_first: bool = False   # teleport to the first stop instead of walking there
+    kind: str = "route"           # route | trick_or_treat
+    speed_jitter: float = 0.0     # +/- fraction of speed, re-rolled per leg
+
+
+@dataclass
+class _Leg:
+    points: list
+    index: int                    # which stop (0-based) this leg arrives at
+    dwell_s: float = 0.0

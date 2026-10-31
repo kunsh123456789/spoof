@@ -56,3 +56,26 @@ class FakeBackend:
 @pytest.fixture
 def backend():
     return FakeBackend()
+
+
+class FakeRouter:
+    """Roads that detour via a corner point, so tests can tell road routes from straight lines."""
+
+    def __init__(self):
+        self.calls: list = []
+
+    async def route(self, waypoints, mode):
+        self.calls.append((list(waypoints), mode))
+        legs = []
+        for (a, b) in zip(waypoints, waypoints[1:]):
+            legs.append([a, (a[0], b[1]), b])  # go along latitude-constant first, then turn
+        return legs
+
+
+class FakeHouses:
+    def __init__(self):
+        self.calls: list = []
+
+    async def plan(self, lat, lon, radius_m, count, rng=None):
+        self.calls.append((lat, lon, radius_m, count))
+        return [{"lat": lat + i * 0.0001, "lon": lon, "dwell_s": 0.02} for i in range(min(count, 5))]

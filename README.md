@@ -11,8 +11,9 @@ Everything runs on localhost — no accounts, no cloud services, no API keys.
 ## Features
 
 device status (name, iOS version, clear errors) · click-to-pin map + manual lat/lon · place search ·
-Set / Clear location · saved favorites (`favorites.json`) · "Move to pin" at an adjustable speed
-(walk / bike / drive, straight line) · dark mode · phone-friendly layout.
+Set / Clear location · **road routes** (walking or driving paths, or a straight line) with adjustable speed ·
+**multi-stop routes** (pauses, looping) · **trick-or-treat mode** (orange theme) · saved favorites ·
+recent locations · dark mode · phone-friendly layout.
 
 ## Quick start
 
@@ -90,10 +91,27 @@ Leave it running; the app picks it up on the next click. Force a mode with `pyth
 
 * **Click** the map to drop a pin (drag it to fine-tune), or type lat/lon, or **search** (e.g. "Eiffel Tower").
 * **Set Location** sends the pin to the phone. **Clear / Restore Real** stops simulating.
-* **Move to pin** glides from the current simulated position to the pin in a straight line at the chosen speed
-  (changeable while moving; **Stop here** halts). You must **Set Location** once first. Teleporting a long distance
-  and then suddenly "driving" at 50 km/h is how some apps detect fakes — keep that in mind.
-* **Favorites** are saved in `favorites.json` next to `app.py`.
+* **Move gradually**: choose **Straight line**, **Walking path** or **Driving path**, set the speed, and press
+  **Move to pin**. Walking/driving paths follow real roads or footpaths from OpenStreetMap data and are drawn on the map.
+  Changing the speed while moving takes effect immediately; **Stop here** halts where you are.
+  You must **Set Location** once first so there is a starting point.
+* **Multi-stop route**: add several stops (**Add pin as stop**, or the **＋** button on search results, favorites and
+  recents), reorder with the arrows, optionally set a pause at each stop and **Loop**, then **Start route**. It uses the
+  path type and speed from the section above.
+* **Trick or treat 🎃**: switch on trick-or-treat mode (the app turns orange), put the pin on a residential street,
+  and press **Find houses near pin**. It looks up houses around the pin on OpenStreetMap, builds a house-to-house tour
+  (nearest neighbour first) with random 20-120 s pauses at each door, and shows it as pumpkins. **Start trick-or-treating**
+  jumps to the first house, then walks street to street at about 4.5 km/h (with natural speed variation). Use
+  **Stop here** to end it. Radius and number of houses are adjustable.
+* **Favorites**: type a name and either leave "Place or lat, lon" blank (saves the current pin), type a place name
+  (looked up for you) or paste coordinates like `48.8584, 2.2945`. You can also press **★** on a search result or recent.
+* **Recent** remembers your last 15 locations (each Set Location and finished route). Click one to jump there.
+* Files `favorites.json` and `recent.json` live next to `app.py` and are ignored by git.
+
+Notes on the online services: place search (Nominatim), road routing (the free OSM-community OSRM servers at
+routing.openstreetmap.de) and house lookup (Overpass API) are free public services with fair-use limits. The app sends a
+User-Agent, rate-limits and caches requests; if one is down you get a friendly message, and **Straight line** always works
+offline. Large location jumps followed by fast movement are how some apps detect fake GPS, so keep that in mind.
 
 Command-line options: `python app.py --port 8000 --tunnel auto -v` (`-v` = debug logging). The server binds to
 127.0.0.1 only and has no authentication — don't expose it to a network.
@@ -110,6 +128,8 @@ Command-line options: `python app.py --port 8000 --tunnel auto -v` (`-v` = debug
 | **iOS 17+ needs a developer tunnel** | Run the `sudo … tunneld` command above in another terminal. |
 | **No Developer Disk Image / service unavailable** | Be online for the first mount; `pip install -U pymobiledevice3` for newly released iOS versions. Replug the phone. |
 | Location reverts after a while / when I quit | iOS 17+ simulation ends when the app disconnects (see note above). |
+| "Could not get a road route" / "No route" | The routing service is down, or the points aren't connected by roads. Try again, or use Straight line. |
+| "Could not look up houses" / "Found only N houses" | The Overpass service is busy (wait a minute), or move the pin to a residential street / increase the radius. |
 | Search says "rate-limiting" or "offline" | Nominatim allows ~1 request/second and needs internet. Wait a moment. |
 | Map is grey | OpenStreetMap tiles need internet. |
 | Something else | Run `python app.py -v` and read the terminal; every failure logs a full traceback there. |
@@ -124,13 +144,17 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-Tests use a fake phone (no hardware needed) and cover the API, error states, walking, favorites and search rate limiting.
+Tests use a fake phone and mocked web services (no hardware or internet needed) and cover the API, error states,
+route following, multi-stop/loop/trick-or-treat logic, routing/Overpass parsing, favorites, recents and search rate limiting.
 
 ## Layout
 
 ```
 app.py                 entry point (python app.py)
-locspoof/device.py     phone detection, iOS-version-specific sessions, walk logic
+locspoof/device.py     phone detection, iOS-version-specific sessions, journey runner
+locspoof/routing.py    road routing (OSRM) with per-leg geometry
+locspoof/trickortreat.py house lookup (Overpass) and tour planning
+locspoof/recents.py    recent locations store
 locspoof/geocode.py    Nominatim client (User-Agent, rate limit, cache)
 locspoof/favorites.py  JSON favorites store
 locspoof/movement.py   great-circle math
