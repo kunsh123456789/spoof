@@ -181,6 +181,7 @@ class SpyAwake:
 
 def make(tmp_path, backend, **kw):
     spy = kw.pop("keep_awake", None) or SpyAwake()
+    (tmp_path / "s.json").write_text('{"keep_awake_open": false}')      # these tests are about what *needs* the Mac awake
     app = create_app(backend=backend, router=FakeRouter(), house_finder=FakeHouses(), favorites_path=tmp_path / "f.json",
                      recents_path=tmp_path / "r.json", offline_root=tmp_path / "o", settings_path=tmp_path / "s.json",
                      routes_path=tmp_path / "rt.json", devices_path=tmp_path / "d.json", schedules_path=tmp_path / "sch.json",
@@ -289,3 +290,20 @@ def test_a_crash_in_the_awake_loop_is_contained(tmp_path):
     with TestClient(app) as c:
         time.sleep(0.4)
         assert boom["n"] > 3 and c.get("/api/status").status_code == 200
+
+
+def test_the_mac_stays_awake_while_the_app_is_open_unless_that_is_switched_off(tmp_path):
+    spy = SpyAwake()
+    app = create_app(backend=FakeBackend(), router=FakeRouter(), house_finder=FakeHouses(), favorites_path=tmp_path / "f.json",
+                     recents_path=tmp_path / "r.json", offline_root=tmp_path / "o", settings_path=tmp_path / "s2.json",
+                     routes_path=tmp_path / "rt.json", devices_path=tmp_path / "d.json", schedules_path=tmp_path / "sch.json",
+                     keep_awake=spy, awake_interval=0.03, walk_tick=0.01, ambient_tick=0.5, rng=random.Random(1))
+    with TestClient(app) as c:
+        assert c.get("/api/settings").json()["keep_awake_open"] is True
+        wait_for(lambda: spy.calls and spy.calls[-1][0])                                          # nothing is running, but the app is open
+        assert "the app is open" in spy.calls[-1][1]
+        c.patch("/api/settings", json={"keep_awake_open": False})
+        wait_for(lambda: spy.calls and not spy.calls[-1][0])
+        c.patch("/api/settings", json={"keep_awake": False, "keep_awake_open": True})
+        time.sleep(0.2)
+        assert not spy.calls[-1][0]                                                   # the master switch still wins

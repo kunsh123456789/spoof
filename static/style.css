@@ -401,3 +401,9 @@ kbd { font: 600 11.5px ui-monospace, Menlo, monospace; padding: 2px 6px; border-
 .list li .devbtn { background: #f59e0b; color: #1a1200; border-color: #d97706; white-space: nowrap; }
 #tpPhones li, #tpRemotes li { flex-wrap: wrap; }
 #tpPhones li .name, #tpRemotes li .name { flex: 1 1 100%; white-space: normal; }
+
+.hist { list-style: none; margin: 8px 0 0; padding: 0; }
+.hist li { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: start; padding: 7px 2px; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+.hist li .ts { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hist li[data-level="warn"] .tx { color: var(--warn); } .hist li[data-tag="drop"] .tx, .hist li[data-tag="down"] .tx { color: var(--danger); font-weight: 600; }
+.hist li.daybreak { grid-template-columns: 1fr; text-align: center; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; border: none; }

@@ -477,24 +477,35 @@ def create_app(
     app.state.awake = awake
 
     awake_was = {"on": False}
+    remote_was: dict[str, bool] = {}
 
     async def awake_tick() -> None:
         """Decide whether the Mac must stay awake, and notice if it slept (then re-check every phone at once)."""
         slept = watch.check()
         if slept is not None:
-            activity.add("💤 The Mac was asleep for about %d min: re-checking the phone" % max(round(slept / 60), 1), kind="mac", level="warn")
+            activity.add("💤 The Mac was asleep for about %d min: re-checking the phone" % max(round(slept / 60), 1), kind="link", level="warn", tag="sleep")
             for m in fleet.all_managers():
                 m.on_wake()
+        for d in remote_store.listing():                         # note remote phones coming and going
+            was = remote_was.get(d["id"])
+            remote_was[d["id"]] = d["online"]
+            if was is not None and was != d["online"]:
+                activity.add("🎮 Remote “%s” %s%s" % (d["name"], "connected" if d["online"] else "disconnected", (" (%s)" % ("🌍 Tailscale" if d["via"] == "tailscale" else "🏠 Wi-Fi")) if d["online"] and d["via"] else ""),
+                             kind="link", level="info" if d["online"] else "warn", tag="remote_up" if d["online"] else "remote_down")
         reasons: list[str] = []
+        if settings.data["keep_awake_open"]:
+            reasons.append("the app is open")
         for m in fleet.all_managers():
             reasons += m.awake_reasons()
         if scheduler.wants_awake():
             reasons.append("an activated schedule is waiting")
         want = settings.data["keep_awake"] and bool(reasons)
         awake.update(want, reasons, settings.data["keep_screen_on"])
-        if want != awake_was["on"]:
-            awake_was["on"] = want
-            activity.add("☕ Keeping the Mac awake: %s" % ", ".join(reasons) if want else "The Mac may sleep again", kind="mac")
+        real = [r for r in reasons if r != "the app is open"]          # "just open" is always on: not worth a log line each time
+        want_real = settings.data["keep_awake"] and bool(real)
+        if want_real != awake_was["on"]:
+            awake_was["on"] = want_real
+            activity.add("☕ Keeping the Mac awake: %s" % ", ".join(real) if want_real else "Nothing needs the Mac awake now", kind="mac")
 
     async def awake_loop() -> None:
         while True:
@@ -809,8 +820,9 @@ def create_app(
         return await geo.reverse(lat, lon)
 
     @app.get("/api/activity")
-    async def get_activity(after: int = 0):
-        return {"events": activity.list(after), "last_id": activity.last_id}
+    async def get_activity(after: int = 0, kinds: str = ""):
+        wanted = {k for k in kinds.split(",") if k} or None
+        return {"events": activity.list(after, kinds=wanted), "last_id": activity.last_id}
 
     @app.delete("/api/activity")
     async def clear_activity():

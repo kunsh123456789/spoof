@@ -7,8 +7,8 @@
   <title>iPhone Location Simulator</title>
   <link rel="icon" href="/static/icon.png">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=31">
-  <link rel="stylesheet" href="/static/fun.css?v=31">
+  <link rel="stylesheet" href="/static/style.css?v=32">
+  <link rel="stylesheet" href="/static/fun.css?v=32">
 </head>
 <body>
   <!-- ======================= top bar ======================= -->
@@ -59,6 +59,8 @@
         <span><b>Auto-reconnect</b><small>If the cable or Wi-Fi drops, wait for the phone, restore the fake location and carry on with the route.</small></span></label>
       <label class="sw"><input type="checkbox" data-setting="keep_awake"><span class="track"></span>
         <span><b>☕ Keep this Mac awake when needed</b><small>While a trip, a live iOS 17+ fake location or an activated schedule needs it. The screen may still turn off.</small></span></label>
+      <label class="sw"><input type="checkbox" data-setting="keep_awake_open"><span class="track"></span>
+        <span><b>Stay awake the whole time the app is open</b><small>On by default: the Mac will not fall asleep while this app is open, even when nothing is running (so the phone remote always works). Turn off to only hold it awake when a trip or plan needs it.</small></span></label>
       <label class="sw"><input type="checkbox" data-setting="keep_screen_on"><span class="track"></span>
         <span><b>Keep the screen on too</b><small>Off by default, so the display can go dark and save power.</small></span></label>
       <p id="awakeState" class="muted"></p>
@@ -367,6 +369,7 @@
           <ol>
             <li><b>📱 iPhones on this Mac</b> are the phones whose location this app changes (connected by cable or Wi-Fi). Click one to control it. <b>☆</b> marks a favorite, <b>✎</b> renames it.</li>
             <li><b>New phone?</b> iOS 16 and later must have <b>Developer Mode</b> on before a location can be set. If a phone shows <b>Developer Mode OFF</b>, press <b>🛠 Enable Developer Mode</b>: the app makes the switch appear on the phone and asks it to turn on. The phone restarts and asks you to confirm (a phone with a passcode needs you to flip the switch yourself: the app tells you where).</li>
+            <li><b>📶 Connection history</b> at the bottom lists every time a phone connected, dropped or came back, switched between cable and Wi-Fi, a remote connected or left, and when the Mac slept.</li>
             <li><b>🎮 Remote controls</b> are the other phones that control this app from their own screen (set up in Settings → Phone remote). 🟢 = connected right now. Give each a name you recognise.</li>
           </ol>
         </details>
@@ -378,6 +381,9 @@
         <ul id="tpRemotes" class="list"></ul>
         <div class="row"><button id="tpPair" class="secondary">New pairing code</button><b id="tpCode" class="bigcode"></b></div>
         <p id="tpUrl" class="muted"></p>
+        <h2>📶 Connection history <small class="muted">(drops, reconnects, Mac sleep)</small></h2>
+        <p id="tpHistSummary" class="infocard"></p>
+        <ul id="tpHistory" class="hist"></ul>
       </section>
 
       <!-- ============ ACTIVITY ============ -->
@@ -498,7 +504,7 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/fun.js?v=31"></script>
-  <script src="/static/app.js?v=31"></script>
+  <script src="/static/fun.js?v=32"></script>
+  <script src="/static/app.js?v=32"></script>
 </body>
 </html>

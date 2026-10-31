@@ -161,6 +161,7 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
 
 * **Command palette**: `Ctrl/⌘ K`, then type anything: a tab, *stop*, *restore*, *dark*, a favorite, a saved route, or an address to search.
 * **Shortcuts** (press `?` to see them all): `1`–`8` tabs · `Space` stop moving · `R` restore real GPS · `B` return to start · `\` hide/show the side card · `/` search · `C` crosshair (precise pin) · `L` centre on the phone · `M` next map style · `,` settings.
+* **📶 Connection history** (bottom of the Phones tab): every time an iPhone connected (🔌 cable / 📶 Wi-Fi), dropped, came back or switched between cable and Wi-Fi, a remote phone connected or left, and every time the Mac slept, with a 24-hour summary (drops, sleeps, last drop).
 * **📱 Phones** tab: two clearly separate lists. **iPhones on this Mac** (the phones whose location is changed: cable or Wi-Fi, favorite, rename, which one is being controlled, and whether **Developer Mode** is on) and **Remote controls** (the other phones that control the app: 🟢 connected now, over home Wi-Fi or Tailscale, rename, forget). A new iPhone (iOS 16+) with Developer Mode off shows a **🛠 Enable Developer Mode** button: it makes the switch appear on the phone and asks it to turn on. The phone restarts and you confirm “Turn On” on it; a phone with a passcode must be switched on by hand (Settings → Privacy & Security → Developer Mode), and the app says so.
 * **⚙ Settings** (top right): light / dark / auto, accent colour, seasonal themes on/off, map style (street, satellite, topo), **Fun mode**, the setup checklist and a reset.
 * **📜 Activity** tab: a log of what happened and when (phone connected, location set, trips, schedule steps, Mac asleep…).
@@ -268,7 +269,7 @@ their fake location by themselves (but a running trip still stops while the Mac 
 What the app does instead is stop the Mac from sleeping **whenever it is needed**: while a trip is running, while an iOS 17+ fake location is
 active, while the app is reconnecting, and while an **activated schedule** has steps coming within the next day. It uses macOS's own `caffeinate`
 tool, started with `-w <the app's process id>` so it ends the instant the app does, even if the app crashes: it cannot leave your Mac stuck awake.
-Nothing is held when nothing needs it. Switches (in **Phones & connection**, on by default / off by default): **Keep this Mac awake when needed**
+By default the Mac is held awake the whole time the app is open (**Stay awake the whole time the app is open**, so it can't fall asleep while idle and cut off the phone remote); turn that switch off to hold it awake only when something needs it. Switches (in **Phones & connection**, on by default / off by default): **Keep this Mac awake when needed**
 and **Keep the screen on too** (off: the display may go dark and save power while the Mac stays awake). The status bar shows "☕ Mac kept awake".
 The window app also opts out of macOS **App Nap**, which could otherwise delay timers (and so scheduled steps) while its window is hidden.
 

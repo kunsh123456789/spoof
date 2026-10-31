@@ -349,3 +349,35 @@ def test_the_phone_list_shows_developer_mode_and_it_can_be_enabled(tmp_path):
         from locspoof.errors import AppError
         backend.developer_result = AppError("no_developer_mode", "No switch.", "Only iOS 16+.", 409)
         assert c.post(f"/api/devices/{phone['udid']}/developer-mode").status_code == 409
+
+
+# ---- connection history ----
+def test_connection_events_are_tagged_and_can_be_filtered(tmp_path):
+    from locspoof.activity import ActivityLog
+    log = ActivityLog(tmp_path / "a.json")
+    log.add("Location set", kind="location")
+    log.add("iPhone connected (USB)", kind="link", tag="up")
+    log.add("Lost the connection", kind="link", level="warn", tag="drop")
+    assert [e["text"] for e in log.list(kinds={"link"})] == ["iPhone connected (USB)", "Lost the connection"]
+    assert [e.get("tag") for e in log.list(kinds={"link"})] == ["up", "drop"] and "tag" not in log.list()[0]
+    assert ActivityLog(tmp_path / "a.json").list(kinds={"link"})[1]["tag"] == "drop"          # survives a restart
+
+
+def test_a_cable_pull_and_replug_shows_up_in_the_connection_history(tmp_path):
+    backend = FakeBackend()
+    app = create_app(backend=backend, router=FakeRouter(), house_finder=FakeHouses(), favorites_path=tmp_path / "f.json",
+                     recents_path=tmp_path / "r.json", offline_root=tmp_path / "o", settings_path=tmp_path / "s.json",
+                     routes_path=tmp_path / "rt.json", devices_path=tmp_path / "d.json", schedules_path=tmp_path / "sch.json",
+                     activity_path=tmp_path / "act.json", walk_tick=0.02, ambient_tick=0.5, rng=random.Random(1))
+    with TestClient(app) as c:
+        c.get("/api/status")
+        c.post("/api/location", json={"lat": 1, "lon": 1})
+        backend.unplug()
+        time.sleep(0.2)
+        c.get("/api/status", params={"fresh": "true"})
+        backend.replug()
+        time.sleep(0.3)
+        c.get("/api/status")
+        ev = c.get("/api/activity", params={"kinds": "link"}).json()["events"]
+        assert ev and all(e["kind"] == "link" for e in ev) and ev[0]["tag"] == "up" and "(🔌 USB)" in ev[0]["text"]
+        assert c.get("/api/activity", params={"kinds": "location"}).json()["events"][0]["text"].startswith("Location set")

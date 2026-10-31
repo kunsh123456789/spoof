@@ -671,6 +671,7 @@ class DeviceManager:
         self._origin: Optional[tuple[float, float]] = None     # where the last journey started (for "return")
         self._last_plan: Optional["JourneyPlan"] = None
         self._lost = False                                     # phone vanished; will restore when it returns
+        self._conn_type: Optional[str] = None                  # USB / Wi-Fi as last seen, to notice a switch
         self._outage_logged = False                            # the activity log already says it was lost
         self._cooldown: Optional[dict] = None
         self._walk_task: Optional[asyncio.Task] = None
@@ -678,11 +679,11 @@ class DeviceManager:
         self._walk: dict = {}
         self._status_cache: tuple[float, dict] | None = None
 
-    def _note(self, text: str, level: str = "info", kind: str = "info") -> None:
+    def _note(self, text: str, level: str = "info", kind: str = "info", tag: Optional[str] = None) -> None:
         """Add a line to the activity log (the timeline in the Activity tab)."""
         if self.activity is not None:
             try:
-                self.activity.add(text, kind=kind, level=level, phone=self._info.name if self._info else None)
+                self.activity.add(text, kind=kind, level=level, phone=self._info.name if self._info else None, tag=tag)
             except Exception:
                 log.debug("could not write to the activity log", exc_info=True)
 
@@ -756,14 +757,20 @@ class DeviceManager:
 
     def _note_phone_state(self, base: dict) -> None:
         state = base.get("state")
+        conn = (base.get("device") or {}).get("connection")
+        if state == "ready" and state == self._phone_state and conn and self._conn_type and conn != self._conn_type:
+            self._note("Switched from %s to %s" % ("📶 Wi-Fi" if self._conn_type == "Wi-Fi" else "🔌 USB", "📶 Wi-Fi" if conn == "Wi-Fi" else "🔌 USB"), kind="link", tag="switch")
+            self._conn_type = conn
         if state == self._phone_state or state == "connecting":
             return
         first = self._phone_state is None
         self._phone_state = state
         if state == "ready":
-            self._note("iPhone connected: %s" % (self._info.name if self._info else "iPhone"), kind="phone")
+            conn = (base.get("device") or {}).get("connection") or (self._info.connection if self._info else "")
+            self._conn_type = conn
+            self._note("iPhone connected: %s%s" % (self._info.name if self._info else "iPhone", (" (%s)" % ("📶 Wi-Fi" if conn == "Wi-Fi" else "🔌 USB")) if conn else ""), kind="link", tag="up")
         elif not first or state != "ready":
-            self._note("iPhone not ready: %s" % ((base.get("error") or {}).get("message") or state), level="warn", kind="phone")
+            self._note("iPhone not ready: %s" % ((base.get("error") or {}).get("message") or state), level="warn", kind="link", tag="down")
 
     def _compose(self, base: dict) -> dict:
         """The answer for /api/status: the phone part plus the live simulation/trip state (and the stale-location notice)."""
@@ -940,7 +947,7 @@ class DeviceManager:
                     self._position = (lat, lon)
                 self._remember_sim()
                 if self._lost or self._outage_logged:
-                    self._note("iPhone reconnected: the location and trip carry on", kind="phone")
+                    self._note("iPhone reconnected: the location and trip carry on", kind="link", tag="up")
                 self._lost = False; self._outage_logged = False
                 if self._walk.get("state") == "reconnecting":
                     self._walk["state"] = "moving"
@@ -949,7 +956,7 @@ class DeviceManager:
                 if not (self._on("auto_reconnect") and e.code in TRANSIENT_CODES) or time.monotonic() > deadline:
                     raise
                 if not self._outage_logged:                # (_run may already have set _lost, so it can't be the test)
-                    self._note("Lost the connection to the iPhone: waiting for it to come back", level="warn", kind="phone")
+                    self._note("Lost the connection to the iPhone: waiting for it to come back", level="warn", kind="link", tag="drop")
                     self._outage_logged = True
                 self._lost = True
                 self._walk["state"] = "reconnecting"

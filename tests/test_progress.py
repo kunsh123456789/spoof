@@ -248,7 +248,7 @@ def test_stopping_and_errors_and_reconnects_are_logged(env):
     t = texts(c)
     assert any("Lost the connection" in x for x in t) and any("reconnected" in x for x in t) and "Trip stopped" in t, t
     lost = [e for e in events(c)["events"] if "Lost the connection" in e["text"]][0]
-    assert lost["level"] == "warn" and lost["kind"] == "phone"
+    assert lost["level"] == "warn" and lost["kind"] == "link"
 
 
 def test_a_failing_trip_is_logged_as_an_error(env):

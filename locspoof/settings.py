@@ -29,6 +29,7 @@ DEFAULTS: dict[str, bool] = {
     "auto_reconnect": True,  # keep going / restore the location after a cable or Wi-Fi hiccup
     # keep the Mac awake
     "keep_awake": True,      # hold the Mac awake while a trip, a live iOS 17+ simulation or an activated schedule needs it
+    "keep_awake_open": True, # keep the Mac awake the whole time this app is open (not only while a trip / plan needs it)
     "keep_screen_on": False, # also keep the SCREEN on (off = the screen may go dark, the Mac stays awake)
 }
 

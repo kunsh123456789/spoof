@@ -385,6 +385,24 @@
       loadDevices(true);
     } catch (e) { fail(e); }
   }
+  // ---------- connection history: every connect / drop / reconnect / sleep, newest first ----------
+  const HIST_ICON = { up: "✅", down: "❌", drop: "⚠️", switch: "🔄", sleep: "💤", remote_up: "🎮", remote_down: "🎮" };
+  async function loadHistory() {
+    if (tab !== "phones") return;
+    let events; try { events = (await api("GET", "/api/activity?kinds=link")).events; } catch { return; }
+    const dayAgo = Date.now() / 1000 - 86400, recent = events.filter((e) => e.ts > dayAgo);
+    const drops = recent.filter((e) => e.tag === "drop" || e.tag === "down").length, sleeps = recent.filter((e) => e.tag === "sleep").length, last = events.filter((e) => e.tag === "drop" || e.tag === "down").pop();
+    $("tpHistSummary").textContent = events.length ? `Last 24 hours: ${drops} drop${drops === 1 ? "" : "s"} · ${sleeps} Mac sleep${sleeps === 1 ? "" : "s"}${last ? ` · last drop ${new Date(last.ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : " · nothing has dropped 🎉"}.` : "Nothing recorded yet. Connections and drops will appear here.";
+    let day = ""; const rows = [];
+    for (const ev of events.slice().reverse().slice(0, 80)) {
+      const dn = dayName(ev.ts); if (dn !== day) { day = dn; const b = document.createElement("li"); b.className = "daybreak"; b.textContent = dn; rows.push(b); }
+      const el = document.createElement("li"); el.dataset.level = ev.level; el.dataset.tag = ev.tag || "";
+      const ic = document.createElement("span"); ic.className = "ic"; ic.textContent = (ev.tag === "remote_down" ? "📴" : HIST_ICON[ev.tag]) || "•";
+      const tx = document.createElement("span"); tx.className = "tx"; tx.textContent = ev.text; const ts = document.createElement("span"); ts.className = "ts"; ts.textContent = new Date(ev.ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+      el.append(ic, tx, ts); rows.push(el);
+    }
+    $("tpHistory").replaceChildren(...rows);
+  }
   let remoteTabTimer = null;
   async function loadRemoteTab() {
     clearTimeout(remoteTabTimer);
@@ -404,6 +422,7 @@
       return el;
     }) : []));
     if (r.enabled && !r.devices.length) $("tpRemotes").append(li("No remote phones paired yet. Press “New pairing code”."));
+    loadHistory();
     remoteTabTimer = setTimeout(loadRemoteTab, 3000);
   }
   function renameRemote(row, d) {
