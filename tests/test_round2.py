@@ -381,3 +381,46 @@ def test_a_cable_pull_and_replug_shows_up_in_the_connection_history(tmp_path):
         ev = c.get("/api/activity", params={"kinds": "link"}).json()["events"]
         assert ev and all(e["kind"] == "link" for e in ev) and ev[0]["tag"] == "up" and "(🔌 USB)" in ev[0]["text"]
         assert c.get("/api/activity", params={"kinds": "location"}).json()["events"][0]["text"].startswith("Location set")
+
+
+# ---- trick or treat: more houses, lights-off houses, start and finish at the pin ----
+def test_lights_off_chance_is_its_own_setting():
+    from locspoof.trickortreat import build_plan
+    pts = [(1 + i * 0.0003, 1) for i in range(60)]
+    some = build_plan(pts, (1, 1), 60, random.Random(2), lights_off_p=0.3)
+    off = [h for h in some if h["lights_off"]]
+    assert 8 <= len(off) <= 30 and not some[0]["lights_off"] and all(h["dwell_s"] == 0 for h in off)
+    assert not any(h["lights_off"] for h in build_plan(pts, (1, 1), 60, random.Random(2), lights_off_p=0.0))
+    assert not any(h["lights_off"] for h in build_plan(pts, (1, 1), 60, random.Random(2)))                      # old default: none
+    assert any(h["lights_off"] for h in build_plan(pts, (1, 1), 60, random.Random(2), realistic=True))          # realistic still means 15%
+
+
+def test_the_tot_settings_and_limits(env):
+    s = env.get("/api/settings").json()
+    assert s["tot_start_at_pin"] is True and s["tot_lights_off"] is True and s["tot_lights_off_pct"] == 20.0
+    assert env.patch("/api/settings", json={"tot_lights_off_pct": 35}).json()["tot_lights_off_pct"] == 35.0
+    assert env.patch("/api/settings", json={"tot_lights_off_pct": 90}).status_code == 422
+    env.post("/api/trick-or-treat/plan", json={"lat": 1, "lon": 2, "houses": 70})
+    assert env.houses.opts["lights_off_p"] == 0.35
+    env.patch("/api/settings", json={"tot_lights_off": False})
+    env.post("/api/trick-or-treat/plan", json={"lat": 1, "lon": 2, "houses": 80})
+    assert env.houses.opts["lights_off_p"] == 0.0
+    assert env.post("/api/trick-or-treat/plan", json={"lat": 1, "lon": 2, "houses": 81}).status_code == 422
+    assert env.post("/api/route-preview", json={"points": [[0, 0.0001 * i] for i in range(90)], "mode": "straight"}).status_code == 200
+
+
+def test_a_long_tour_of_70_houses_can_start_and_return_to_the_pin(tmp_path):
+    app = create_app(backend=FakeBackend(), router=FakeRouter(), house_finder=FakeHouses(), favorites_path=tmp_path / "f.json",
+                     recents_path=tmp_path / "r.json", offline_root=tmp_path / "o", settings_path=tmp_path / "s.json",
+                     routes_path=tmp_path / "rt.json", devices_path=tmp_path / "d.json", schedules_path=tmp_path / "sch.json",
+                     activity_path=tmp_path / "act.json", walk_tick=0.001, ambient_tick=0.5, rng=random.Random(1))
+    with TestClient(app) as c:
+        c.post("/api/location", json={"lat": 10.0, "lon": 10.0})                              # the pin
+        stops = [{"lat": 10.0 + 0.0002 * i, "lon": 10.0, "dwell_s": 0, "label": f"house {i + 1}"} for i in range(1, 71)]
+        r = c.post("/api/journey", json={"stops": stops, "mode": "straight", "speed_kmh": 400, "kind": "trick_or_treat", "return_to_start": True})
+        assert r.status_code == 200
+        end = time.time() + 40
+        while time.time() < end and c.get("/api/status").json()["walk"]["active"]:
+            time.sleep(0.05)
+        sim = c.get("/api/status").json()["simulation"]
+        assert abs(sim["lat"] - 10.0) < 1e-4 and abs(sim["lon"] - 10.0) < 1e-4                # finished back at the pin

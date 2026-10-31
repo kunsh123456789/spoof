@@ -23,6 +23,8 @@ DEFAULTS: dict[str, bool] = {
     "california_only": True,  # the map (and search) is limited to California
     # trick or treat
     "tot_realistic": False,  # some houses have their lights off, some long chats at the door
+    "tot_start_at_pin": True, # start at the pin and finish back at the pin
+    "tot_lights_off": True,  # some houses have their lights off (skipped)
     "tot_kids": False,       # a group of kids: slower, longer pauses
     "tot_avoid_busy": False, # skip houses on big roads and never cross them
     # connection
@@ -39,6 +41,7 @@ NUMBERS: dict[str, tuple[float, float, float]] = {
     "stop_sign_s": (3.0, 1.0, 30.0),       # wait at a stop sign
     "junction_min_s": (10.0, 1.0, 300.0),  # wait at a junction / traffic light: random between min and max
     "junction_max_s": (35.0, 1.0, 300.0),
+    "tot_lights_off_pct": (20.0, 0.0, 60.0),   # percent of houses with the lights off
     "tot_dwell_min_s": (20.0, 0.0, 600.0), # time at each house while trick-or-treating: random between min and max
     "tot_dwell_max_s": (70.0, 0.0, 600.0),
     "remote_port": (8787.0, 1024.0, 65535.0),   # the port the phone remote listens on

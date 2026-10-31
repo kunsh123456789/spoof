@@ -7,8 +7,8 @@
   <title>iPhone Location Simulator</title>
   <link rel="icon" href="/static/icon.png">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=32">
-  <link rel="stylesheet" href="/static/fun.css?v=32">
+  <link rel="stylesheet" href="/static/style.css?v=33">
+  <link rel="stylesheet" href="/static/fun.css?v=33">
 </head>
 <body>
   <!-- ======================= top bar ======================= -->
@@ -225,7 +225,7 @@
           <ol>
             <li><b>Draw your area:</b> press <b>Draw area</b>, then click points on the map around the neighborhood you want. Click the <b>first point</b> again (or press <b>Finish</b>) to close the shape. Skip this to use 350 m around the pin instead.</li>
             <li>Press <b>Find houses</b>. Numbered 🎃 pumpkins appear — real houses from OpenStreetMap — and <b>arrows show the path</b> the tour will take. <b>Click a pumpkin → “Start here”</b> to begin the tour at a different house.</li>
-            <li>Press <b>Start</b>. The phone jumps to the first house, then walks street to street at a natural pace and <b>pauses at every door</b> for a random time you choose (below), like a real trick-or-treater.</li>
+            <li>Press <b>Start</b>. With <b>Start and finish at the pin</b> on (the default) the phone begins at your pin, walks the whole tour and returns to the pin; otherwise it jumps to the first house. It walks street to street at a natural pace and <b>pauses at every door</b> for a random time you choose (below), like a real trick-or-treater.</li>
             <li>Watch progress in the bottom bar. <b>Stop moving</b> ends it early — the phone stays where it is.</li>
           </ol>
           <p class="muted">While this tab is open the app turns orange so you know trick-or-treat mode is active.</p>
@@ -244,12 +244,19 @@
         </div>
 
         <h2>Options</h2>
+        <label class="sw"><input type="checkbox" data-setting="tot_start_at_pin"><span class="track"></span>
+          <span><b>📍 Start and finish at the pin</b><small>The phone starts at your pin, walks the tour, then walks back and ends at the pin. Off = it jumps to the first house and stays at the last one.</small></span></label>
+        <label class="sw"><input type="checkbox" data-setting="tot_lights_off"><span class="track"></span>
+          <span><b>🌑 Some houses have their lights off</b><small>Those houses are skipped, like real life.</small></span></label>
+        <div class="numrow">
+          <label>Houses with lights off <span class="num"><input type="number" data-num="tot_lights_off_pct" min="0" max="60" step="5" aria-label="Percent of houses with the lights off"> %</span></label>
+        </div>
         <label class="sw"><input type="checkbox" data-setting="tot_kids"><span class="track"></span>
           <span><b>👨‍👩‍👧 Group of kids</b><small>Slower walking pace and longer pauses at every door.</small></span></label>
         <label class="sw"><input type="checkbox" data-setting="tot_avoid_busy"><span class="track"></span>
           <span><b>🛣️ Avoid busy roads</b><small>Skips houses on big roads and never crosses one (the tour stays on one side).</small></span></label>
         <label class="sw"><input type="checkbox" data-setting="tot_realistic"><span class="track"></span>
-          <span><b>🌙 Realistic houses</b><small>Some houses have their lights off (skipped); some turn into a long chat.</small></span></label>
+          <span><b>🌙 Realistic houses</b><small>Some houses turn into a long chat at the door.</small></span></label>
 
         <h2>Time at each house</h2>
         <div class="numrow">
@@ -259,7 +266,7 @@
 
         <h2>Houses</h2>
         <label class="slider">Number of houses: <b><output id="housesOut">20</output></b>
-          <input id="houses" type="range" min="5" max="40" step="1" value="20">
+          <input id="houses" type="range" min="5" max="70" step="1" value="20">
         </label>
         <button id="findBtn" class="secondary full"><span class="step">2</span> Find houses</button>
         <p id="totInfo" class="infocard" hidden></p>
@@ -504,7 +511,7 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/fun.js?v=32"></script>
-  <script src="/static/app.js?v=32"></script>
+  <script src="/static/fun.js?v=33"></script>
+  <script src="/static/app.js?v=33"></script>
 </body>
 </html>

@@ -200,7 +200,7 @@
     } else { map.setMaxBounds(null); map.setMinZoom(2); }
   }
   // ---------- settings (the on/off switches) ----------
-  const SETTING_NEEDS_REPLAN = new Set(["tot_kids", "tot_avoid_busy", "tot_realistic"]);
+  const SETTING_NEEDS_REPLAN = new Set(["tot_kids", "tot_avoid_busy", "tot_realistic", "tot_lights_off"]);
   function applySettings(force = false) {
     document.querySelectorAll("[data-setting]").forEach((cb) => (cb.checked = !!settings[cb.dataset.setting]));
     document.querySelectorAll("[data-num]").forEach((inp) => { if ((force || document.activeElement !== inp) && settings[inp.dataset.num] !== undefined) inp.value = settings[inp.dataset.num]; });
@@ -712,8 +712,10 @@
   });
   // The road the tour will take, with an arrow every so often showing which way it goes.
   let arrowSeq = 0;
+  function tourStart() { try { const c = readInputs(); return Number.isFinite(c.lat) && Number.isFinite(c.lon) ? c : null; } catch { return null; } }
   async function drawTourArrows(visit) {
-    const seq = ++arrowSeq, pts = visit.map((h) => [h.lat, h.lon]);
+    const seq = ++arrowSeq, pts = visit.map((h) => [h.lat, h.lon]), st = settings.tot_start_at_pin !== false ? tourStart() : null;
+    if (st) { pts.unshift([st.lat, st.lon]); pts.push([st.lat, st.lon]); }                // out from the pin and back to it
     if (pts.length < 2) return;
     let route, note = "";
     try { route = (await api("POST", "/api/route-preview", { points: pts, mode: "walk" }, { timeout: 40000 })).route; }
@@ -743,10 +745,14 @@
   $("totStartBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     const visit = houses.filter((h) => !h.lights_off);
     if (!visit.length) throw { message: "Find houses first.", hint: "Press “2 · Find houses”." };
+    const atPin = settings.tot_start_at_pin !== false, start = tourStart();
+    if (atPin && start) {                                  // begin at the pin: put the phone there first, then walk out and come back
+      await api("POST", "/api/location", { lat: start.lat, lon: start.lon, label: pinLabel || labelFor(start.lat, start.lon) || "the pin" });
+    }
     await startJourney({
       stops: visit.map((h, i) => ({ lat: h.lat, lon: h.lon, dwell_s: h.dwell_s, label: `house ${i + 1}` })), mode: "walk", speed_kmh: pace.speed_kmh,
-      jump_to_first: true, kind: "trick_or_treat", speed_jitter: pace.speed_jitter,
-    }, `Happy Halloween! 🎃 Heading to the first house…${settings.tot_kids ? " (with the kids)" : ""}`);
+      jump_to_first: !(atPin && start), return_to_start: atPin, kind: "trick_or_treat", speed_jitter: pace.speed_jitter,
+    }, `Happy Halloween! 🎃 ${atPin && start ? "Heading out from the pin…" : "Heading to the first house…"}${settings.tot_kids ? " (with the kids)" : ""}`);
   });
 
   // ---------- offline areas ----------
@@ -1044,7 +1050,7 @@
       areaBtn.onclick = () => { if (!area) return fail({ message: "Draw an area first.", hint: "Use “Draw area” in the Trick or treat tab." }); p.polygon = area.map((q) => [...q]); delete p.lat; delete p.lon; p.label = "drawn area"; upd(); };
       box.append(where, pickerRow("Neighborhood (address)", () => (!p.polygon && p.lat !== undefined ? p : null), set, [pinButton(set)]));
       const r = document.createElement("div"); r.className = "row"; r.append(areaBtn); box.append(r);
-      const nums = document.createElement("div"); nums.className = "row"; nums.append(numberField("Houses", () => p.houses, (v) => (p.houses = v), 3, 60), numberField("Radius (m, if no area)", () => p.radius_m, (v) => (p.radius_m = v), 100, 1500)); box.append(nums,
+      const nums = document.createElement("div"); nums.className = "row"; nums.append(numberField("Houses", () => p.houses, (v) => (p.houses = v), 3, 80), numberField("Radius (m, if no area)", () => p.radius_m, (v) => (p.radius_m = v), 100, 1500)); box.append(nums,
         check("👨‍👩‍👧 Group of kids", () => p.kids, (v) => (p.kids = v)), check("🛣️ Avoid busy roads", () => p.avoid_busy, (v) => (p.avoid_busy = v)), check("🌙 Realistic houses", () => p.realistic, (v) => (p.realistic = v)));
       upd();
     }

@@ -32,7 +32,7 @@ log = logging.getLogger("locspoof.device")
 
 WALK_TICK_S = 1.0
 MIN_SPEED_KMH, MAX_SPEED_KMH = 0.5, 400.0
-MAX_STOPS = 60
+MAX_STOPS = 90
 MAX_DWELL_S = 900.0
 MODES = ('straight', 'walk', 'drive')
 STATUS_CACHE_S = 2.0

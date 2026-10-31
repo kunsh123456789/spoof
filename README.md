@@ -198,10 +198,11 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
   1. **Draw area**: click points on the map around the neighborhood you want and click the first point again (or press
      **Finish**) to close the shape. **Undo point** removes the last point, **Esc** cancels. The area can be at most 4 km². If you
      skip drawing, houses are searched 350 m around the pin instead.
-  2. **Find houses**: numbered 🎃 pumpkins appear for real houses from OpenStreetMap inside your area, ordered into a house-to-house
+  2. **Find houses** (the slider goes up to **70 houses**; **🌑 Some houses have their lights off**, 20% by default and adjustable, are shown dark and skipped): numbered 🎃 pumpkins appear for real houses from OpenStreetMap inside your area, ordered into a house-to-house
      tour, and **arrows along the streets** show the path the tour will take. Click a pumpkin and choose **▶ Start the tour here** to begin at a
      different house (the tour is re-planned from there).
-  3. **Start**: the phone jumps to the first house, walks street to street at about 4.5 km/h with natural speed variation, and
+  3. **Start**: by default (**📍 Start and finish at the pin**) the phone begins at your pin, walks out to the houses and walks back to finish at the pin; switch it off
+     to jump straight to the first house instead. It walks street to street at about 4.5 km/h with natural speed variation, and
      pauses at every door for a **random time you choose** (**Time at each house**, default 20-70 s; some houses get a longer chat, kids stay 1.6x
      longer). Your own position is a pulsing green dot with a little walker above everything else on the map. **Stop moving** ends it, leaving the phone where it is.
   Options (switches on the tab, saved between runs): **Group of kids** (3.2 km/h and 1.6x longer pauses), **Avoid busy roads**

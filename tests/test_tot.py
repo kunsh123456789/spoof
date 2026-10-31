@@ -173,9 +173,9 @@ def api(tmp_path):
 def test_plan_endpoint_applies_toggles_and_recommends_pace(api):
     body = {"lat": 1, "lon": 2, "houses": 5}
     r = api.post("/api/trick-or-treat/plan", json=body).json()
-    assert api.finder.opts == {"realistic": False, "kids": False, "avoid_busy": False, "dwell_range": (20.0, 70.0)}
+    assert api.finder.opts == {"realistic": False, "kids": False, "avoid_busy": False, "dwell_range": (20.0, 70.0), "lights_off_p": 0.2}
     assert r["pace"] == {"speed_kmh": 4.5, "speed_jitter": 0.2} and r["notes"] == [] and r["houses"][0]["lights_off"] is False
     api.patch("/api/settings", json={"tot_kids": True, "tot_avoid_busy": True, "tot_realistic": True})
     r = api.post("/api/trick-or-treat/plan", json=body).json()
-    assert api.finder.opts == {"realistic": True, "kids": True, "avoid_busy": True, "dwell_range": (20.0, 70.0)}
+    assert api.finder.opts == {"realistic": True, "kids": True, "avoid_busy": True, "dwell_range": (20.0, 70.0), "lights_off_p": 0.2}
     assert r["pace"] == {"speed_kmh": 3.2, "speed_jitter": 0.3}

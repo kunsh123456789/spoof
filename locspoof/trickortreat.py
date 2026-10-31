@@ -66,7 +66,7 @@ LIGHTS_OFF_P, CHAT_P = 0.15, 0.15
 def build_plan(
     points: list[Point], center: Point, count: int, rng: Optional[random.Random] = None,
     dwell_range: tuple[float, float] = (20.0, 70.0), *, realistic: bool = False, kids: bool = False,
-    busy: Optional[BusyRoads] = None, info: Optional[dict] = None,
+    busy: Optional[BusyRoads] = None, info: Optional[dict] = None, lights_off_p: Optional[float] = None,
 ) -> list[dict]:
     """Greedy nearest-neighbour tour starting at the house nearest ``center``, with random dwell times
     (about one stop in five is a longer chat at the door).
@@ -76,6 +76,7 @@ def build_plan(
     * ``kids``: a group of children dawdles, so every pause is 1.6x longer.
     * ``realistic``: about 15% of houses have their lights off (marked ``lights_off``, to be skipped) and
       about 15% turn into a long chat at the door.
+    * ``lights_off_p``: chance (0-1) that a house has its lights off (skipped). None = 15% when ``realistic``, else none.
     ``info`` (optional) receives {"skipped_busy": n, "cut_by_busy": bool} for the UI.
     """
     rng = rng or random.Random()
@@ -106,7 +107,8 @@ def build_plan(
         cur = nxt
     plan = []
     for i, (lat, lon) in enumerate(tour):
-        lights_off = realistic and i > 0 and rng.random() < LIGHTS_OFF_P
+        off_p = lights_off_p if lights_off_p is not None else (LIGHTS_OFF_P if realistic else 0.0)
+        lights_off = i > 0 and off_p > 0 and rng.random() < off_p
         dwell = rng.uniform(*dwell_range)
         if rng.random() < 0.2:
             dwell += rng.uniform(20, 50)
@@ -132,7 +134,7 @@ class HouseFinder:
     async def plan(
         self, lat: float, lon: float, radius_m: int, count: int, rng: Optional[random.Random] = None,
         polygon: Optional[Polygon] = None, *, realistic: bool = False, kids: bool = False, avoid_busy: bool = False,
-        dwell_range: tuple[float, float] = (20.0, 70.0),
+        dwell_range: tuple[float, float] = (20.0, 70.0), lights_off_p: Optional[float] = None,
     ) -> list[dict]:
         self.last_notes = []
         try:
@@ -148,7 +150,7 @@ class HouseFinder:
             points = [p for p in points if point_in_polygon(p[0], p[1], polygon)]
         busy = await self._busy_roads(lat, lon, radius_m, polygon) if avoid_busy else None
         info: dict = {}
-        plan = build_plan(points, (lat, lon), count, rng, dwell_range, realistic=realistic, kids=kids, busy=busy or None, info=info)
+        plan = build_plan(points, (lat, lon), count, rng, dwell_range, realistic=realistic, kids=kids, busy=busy or None, info=info, lights_off_p=lights_off_p)
         if avoid_busy and busy is None:
             self.last_notes.append("Could not load road data, so busy roads were not avoided.")
         elif avoid_busy and not busy:

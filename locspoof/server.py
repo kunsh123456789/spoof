@@ -375,8 +375,8 @@ def create_app(
     async def plan_tot(body: TrickOrTreatRequest, opts: dict) -> dict:
         """Find houses for a trick-or-treat walk. ``opts``: realistic / kids / avoid_busy (global switches, or a
         scheduled step's own choices)."""
-        if not 3 <= body.houses <= 60:
-            raise AppError("bad_count", "Number of houses must be between 3 and 60.", status=422)
+        if not 3 <= body.houses <= 80:
+            raise AppError("bad_count", "Number of houses must be between 3 and 80.", status=422)
         polygon = None
         if body.polygon:
             if not 3 <= len(body.polygon) <= 100 or any(len(p) != 2 for p in body.polygon):
@@ -392,8 +392,8 @@ def create_app(
                     "area_too_big", f"That area is too big ({area / 1e6:.1f} km²).",
                     f"Draw a smaller area (at most {MAX_AREA_M2 / 1e6:.0f} km²).", 422,
                 )
-            if body.lat is not None and body.lon is not None and point_in_polygon(body.lat, body.lon, polygon):
-                lat, lon = body.lat, body.lon       # start near the pin if it is inside the area
+            if body.lat is not None and body.lon is not None:
+                lat, lon = body.lat, body.lon       # the tour begins at the house nearest the pin
             else:
                 lat, lon = polygon_centroid(polygon)
         else:
@@ -404,7 +404,8 @@ def create_app(
                 raise AppError("bad_radius", "Radius must be between 100 and 1500 m.", status=422)
             lat, lon = body.lat, body.lon
         lo, hi = settings.data["tot_dwell_min_s"], settings.data["tot_dwell_max_s"]
-        plan = await houses.plan(lat, lon, body.radius_m, body.houses, polygon=polygon, dwell_range=(lo, max(lo, hi)), **opts)
+        off_p = (settings.data["tot_lights_off_pct"] / 100.0) if settings.data["tot_lights_off"] else 0.0
+        plan = await houses.plan(lat, lon, body.radius_m, body.houses, polygon=polygon, dwell_range=(lo, max(lo, hi)), lights_off_p=off_p, **opts)
         kids = opts["kids"]
         return {
             "houses": plan, "source": getattr(houses, "last_source", "online"), "notes": getattr(houses, "last_notes", []),
@@ -444,9 +445,14 @@ def create_app(
             body = TrickOrTreatRequest(lat=p.get("lat"), lon=p.get("lon"), radius_m=p["radius_m"], houses=p["houses"], polygon=p.get("polygon"))
             res = await plan_tot(body, {"realistic": p["realistic"], "kids": p["kids"], "avoid_busy": p["avoid_busy"]})
             visit = [h for h in res["houses"] if not h["lights_off"]]
+            start = (body.lat, body.lon) if body.lat is not None and body.lon is not None else None
+            round_trip = bool(settings.data["tot_start_at_pin"])
+            if round_trip and start:
+                await manager.set_location(start[0], start[1], p.get("label") or "the pin")       # begin at the pin
             req = JourneyRequest(
                 stops=[StopModel(lat=h["lat"], lon=h["lon"], dwell_s=h["dwell_s"], label="house %d" % (i + 1)) for i, h in enumerate(visit)], mode="walk",
-                speed_kmh=res["pace"]["speed_kmh"], jump_to_first=True, kind="trick_or_treat", speed_jitter=res["pace"]["speed_jitter"],
+                speed_kmh=res["pace"]["speed_kmh"], jump_to_first=not (round_trip and start), kind="trick_or_treat", speed_jitter=res["pace"]["speed_jitter"],
+                return_to_start=round_trip,
             )
             await run_journey(req, manager)
             return "Trick-or-treat started: %d houses.%s" % (len(visit), (" " + " ".join(res["notes"])) if res.get("notes") else "")
@@ -710,8 +716,8 @@ def create_app(
     @app.post("/api/route-preview")
     async def route_preview(body: PreviewRequest):
         pts = [tuple(p) for p in body.points if len(p) == 2]
-        if not 2 <= len(pts) <= 61 or len(pts) != len(body.points):
-            raise AppError("bad_stops", "A preview needs 2 to 61 points.", status=422)
+        if not 2 <= len(pts) <= 91 or len(pts) != len(body.points):
+            raise AppError("bad_stops", "A preview needs 2 to 91 points.", status=422)
         if body.mode not in ("straight", "walk", "drive"):
             raise AppError("bad_mode", "Mode must be straight, walk or drive.", status=422)
         for la, lo in pts:

@@ -107,7 +107,7 @@ def clean_step(raw: Any, index: int = 0) -> dict:
         out["route_id"], out["jump"] = rid, bool(p.get("jump", True))
         out["label"] = str(p.get("label") or "")[:80]
     elif t == "trick_or_treat":
-        out["houses"] = int(_num(p, "houses", 3, 60, 20))
+        out["houses"] = int(_num(p, "houses", 3, 80, 20))
         out["radius_m"] = int(_num(p, "radius_m", 100, 1500, 350))
         poly = p.get("polygon")
         if poly:
