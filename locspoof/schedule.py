@@ -238,11 +238,19 @@ class Scheduler:
     """Watches the clock and runs the steps of activated plans at their time."""
 
     def __init__(self, store: SchedulesStore, execute: Callable[[dict, dict], Awaitable[str]], clock: Callable[[], float] = time.time,
-                 tick_every: float = 1.0, retry_every: float = 15.0):
+                 tick_every: float = 1.0, retry_every: float = 15.0, on_event: Optional[Callable[[dict, dict, str, str], None]] = None):
         self.store, self.execute, self.clock = store, execute, clock
+        self.on_event = on_event          # called as (plan, step, status, note) whenever a step changes state
         self.tick_every, self.retry_every = tick_every, retry_every
         self._loop_task: Optional[asyncio.Task] = None
         self._tasks: dict[tuple[str, str], asyncio.Task] = {}
+
+    def _emit(self, plan: dict, step: dict, status: str, note: str = "") -> None:
+        if self.on_event is not None:
+            try:
+                self.on_event(plan, step, status, note)
+            except Exception:
+                log.debug("on_event failed", exc_info=True)
 
     async def start(self) -> None:
         n = self.store.recover_interrupted()
@@ -282,13 +290,17 @@ class Scheduler:
                 late = now - parse_at(s["at"])
                 if late <= grace:
                     self.store.update_step(plan["id"], s["id"], status="skipped", note="Skipped: a later step was already due.")
+                    self._emit(plan, s, "skipped", "a later step was already due")
                 else:
                     self.store.update_step(plan["id"], s["id"], status="missed", note=self._late_note(late, grace))
+                    self._emit(plan, s, "missed", self._late_note(late, grace))
             late = now - parse_at(current["at"])
             if late > grace:
                 self.store.update_step(plan["id"], current["id"], status="missed", note=self._late_note(late, grace))
+                self._emit(plan, current, "missed", self._late_note(late, grace))
                 continue
             self.store.update_step(plan["id"], current["id"], status="running", note="Started" + (f" {int(late)} s late." if late > 5 else "."))
+            self._emit(plan, current, "running", f"{int(late)} s late" if late > 5 else "")
             key = (plan["id"], current["id"])
             task = asyncio.create_task(self._run_step(plan, current, parse_at(current["at"]) + grace))
             self._tasks[key] = task
@@ -305,6 +317,7 @@ class Scheduler:
             try:
                 note = await self.execute(plan, step)
                 self.store.update_step(pid, sid, status="done", note=note or "Done.", ran_at=self.clock())
+                self._emit(plan, step, "done", note or "")
                 log.info("scheduled step done: %s / %s", plan["name"], step["type"])
                 return
             except asyncio.CancelledError:
@@ -317,6 +330,7 @@ class Scheduler:
                     await asyncio.sleep(self.retry_every)
                     continue
                 self.store.update_step(pid, sid, status="error", note=f"{e.message} {e.hint or ''}".strip(), ran_at=self.clock())
+                self._emit(plan, step, "error", e.message)
                 log.warning("scheduled step failed: %s / %s: %s", plan["name"], step["type"], e.message)
                 return
             except Exception as e:

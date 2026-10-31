@@ -20,14 +20,10 @@
 
   const map = L.map("map", { zoomControl: false }).setView([20, 0], 2);
   L.control.zoom({ position: "topright" }).addTo(map);
-  // Tiles come through the local server: saved offline copies first, OpenStreetMap live otherwise.
-  L.tileLayer("/tiles/{z}/{x}/{y}.png", {
-    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-  }).addTo(map);
 
   let pin = null, simMarker = null, status = null, busy = false, toastTimer = null, centeredOnSim = false;
   let mode = "walk", kind = "single", tab = "place", stops = [], houses = [], pace = { speed_kmh: 4.5, speed_jitter: 0.2 };
-  let landed = false, area = null, draft = [], drawing = false, gpx = null, device = store.get("device") || "", devices = [];
+  let pinLabel = null, landed = false, area = null, draft = [], drawing = false, gpx = null, device = store.get("device") || "", devices = [];
   let routeLayer = null, routeFetched = false, settings = {};
   const stopLayer = L.layerGroup().addTo(map), houseLayer = L.layerGroup().addTo(map), areaLayer = L.layerGroup().addTo(map);
   const gpxLayer = L.layerGroup().addTo(map), otherLayer = L.layerGroup().addTo(map);
@@ -76,24 +72,116 @@
   const shortName = (name) => name.split(",").slice(0, 2).join(",").trim();
   const currentSpeed = () => Number($("speed").value);
 
-  // ---------- tabs, theme, how-to boxes ----------
-  function showTab(name) {
-    tab = name;
-    document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-    document.querySelectorAll(".tabpanel").forEach((p) => (p.hidden = p.id !== `tab-${name}`));
-    if (name === "tot") { stopLayer.remove(); areaLayer.addTo(map); } else { stopLayer.addTo(map); areaLayer.remove(); if (drawing) cancelDraw(); }
-    store.set("tab", name); updateTheme();
-    if (name === "offline") { loadOffline(); scheduleEstimate(); }
-    if (name === "schedule") { loadSchedules(); loadRoutes(); }
-  }
-  document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
-  function updateTheme() {
-    const w = status?.walk, on = tab === "tot" || (w?.active && w.kind === "trick_or_treat");
-    document.documentElement.dataset.theme = on ? "halloween" : "";
-    $("totBanner").hidden = !on;
+  // ---------- appearance: mode, accent, seasonal skin, map style, fun (kept per computer in localStorage) ----------
+  const ui = {
+    mode: store.get("ui.mode") || "auto", accent: store.get("ui.accent") || "blue", seasonal: store.get("ui.seasonal") !== "off",
+    fun: store.get("ui.fun") !== "off", layer: store.get("ui.layer") || "street", skinOverride: "",
+  };
+  const seasonSkin = (d = new Date()) => ({ 9: "halloween", 11: "winter", 1: "hearts" })[d.getMonth()] || "";
+  const prefersDark = () => !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+  function applyTheme() {
+    const root = document.documentElement, w = status?.walk;
+    const dark = ui.mode === "dark" || (ui.mode === "auto" && prefersDark());
+    const totOn = tab === "tot" || !!(w?.active && w.kind === "trick_or_treat");
+    const skin = ui.skinOverride || (totOn ? "halloween" : (ui.seasonal ? seasonSkin() : ""));
+    root.dataset.mode = dark ? "dark" : "light"; root.dataset.accent = ui.accent;
+    if (skin) root.dataset.skin = skin; else delete root.dataset.skin;
+    $("totBanner").hidden = !totOn;
+    $("map").classList.toggle("dark-tiles", dark); $("map").classList.toggle("street", ui.layer === "street");
+    document.querySelectorAll("#modeSeg .segbtn").forEach((b) => b.classList.toggle("active", b.dataset.colour === ui.mode));
+    document.querySelectorAll("#accentSwatches button").forEach((b) => b.classList.toggle("on", b.dataset.accent === ui.accent));
+    document.querySelectorAll("#layerSeg .segbtn").forEach((b) => b.classList.toggle("active", b.dataset.layer === ui.layer));
+    $("seasonalSwitch").checked = ui.seasonal; $("funSwitch").checked = ui.fun;
     if (routeLayer) routeLayer.setStyle({ color: accent() });
     if (typeof renderArea === "function") renderArea();
+    document.dispatchEvent(new CustomEvent("locspoof:ui", { detail: { skin, dark, fun: ui.fun, tab, tot: totOn } }));
   }
+  const updateTheme = applyTheme;
+  if (window.matchMedia) matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyTheme);
+  function setUi(key, value) { ui[key] = value; store.set(`ui.${key}`, typeof value === "boolean" ? (value ? "on" : "off") : value); applyTheme(); }
+
+  // ---------- map styles + tools ----------
+  const OSM_CREDIT = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  const baseLayers = {
+    // Street tiles come through the local server: saved offline copies first, OpenStreetMap live otherwise.
+    street: L.tileLayer("/tiles/{z}/{x}/{y}.png", { maxZoom: 19, attribution: OSM_CREDIT }),
+    satellite: L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19,
+      attribution: "Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics and the GIS User Community" }),
+    topo: L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", { maxZoom: 17, subdomains: "abc",
+      attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM | Style &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)' }),
+  };
+  let currentBase = null;
+  function showLayer(name) {
+    if (!baseLayers[name]) name = "street";
+    if (currentBase) map.removeLayer(currentBase);
+    currentBase = baseLayers[name].addTo(map); currentBase.bringToBack();
+    ui.layer = name; store.set("ui.layer", name); applyTheme();
+  }
+  const LAYER_ORDER = ["street", "satellite", "topo"];
+  const cycleLayer = () => { showLayer(LAYER_ORDER[(LAYER_ORDER.indexOf(ui.layer) + 1) % 3]); toast(`Map style: ${ui.layer}`); };
+  L.control.scale({ position: "bottomright", imperial: false }).addTo(map);
+  let crosshairOn = false;
+  function setCrosshair(on) {
+    crosshairOn = on; $("crosshair").hidden = !on; $("crossBtn")?.classList.toggle("on", on); $("pinHereBtn").hidden = !on;
+    if (on) toast("Crosshair on: pan the map, then press “Pin here” (or Enter).", 4000);
+  }
+  function pinAtCenter() { const c = map.getCenter(); setPin(c.lat, c.lng); toast(`Pin placed at ${fmt4(c.lat)}, ${fmt4(c.lng)}`); }
+  function centreOnPhone() {
+    const sim = status?.simulation;
+    if (sim?.active) map.flyTo([sim.lat, sim.lon], Math.max(map.getZoom(), 16), { duration: 0.8 });
+    else if (pin) map.flyTo(pin.getLatLng(), Math.max(map.getZoom(), 16), { duration: 0.8 });
+    else toast("The phone is not simulating a location yet.");
+  }
+  const MapTools = L.Control.extend({
+    options: { position: "topright" },
+    onAdd() {
+      const box = L.DomUtil.create("div", "maptools"); L.DomEvent.disableClickPropagation(box);
+      const mk = (id, text, title, fn) => { const b = L.DomUtil.create("button", "", box); b.id = id; b.type = "button"; b.textContent = text; b.title = title; b.setAttribute("aria-label", title); b.onclick = fn; return b; };
+      mk("locateBtn", "🎯", "Centre the map on the phone (L)", centreOnPhone);
+      mk("crossBtn", "✛", "Crosshair for a precise pin (C)", () => setCrosshair(!crosshairOn));
+      const here = mk("pinHereBtn", "📌", "Put the pin at the crosshair (Enter)", pinAtCenter); here.hidden = true;
+      mk("layerBtn", "🗺", "Next map style (M)", cycleLayer);
+      return box;
+    },
+  });
+  new MapTools().addTo(map);
+
+  // ---------- side card: tabs, collapse, resize ----------
+  const isMobile = () => window.innerWidth <= 760;
+  function setPanelCollapsed(c) {
+    document.body.classList.toggle("panel-collapsed", c); $("expandBtn").hidden = !c; store.set("ui.collapsed", c ? "1" : "0");
+  }
+  function setPanelWidth(w) {
+    if (isMobile()) { document.documentElement.style.removeProperty("--panel-w"); return; }
+    w = Math.max(330, Math.min(w, Math.round(window.innerWidth * 0.6), 720)); document.documentElement.style.setProperty("--panel-w", w + "px"); return w;
+  }
+  function showTab(name, { toggle = false } = {}) {
+    if (toggle && name === tab && !isMobile()) { setPanelCollapsed(!document.body.classList.contains("panel-collapsed")); return; }
+    if (document.body.classList.contains("panel-collapsed")) setPanelCollapsed(false);
+    tab = name;
+    document.querySelectorAll("#tabs button").forEach((b) => { b.classList.toggle("active", b.dataset.tab === name); b.setAttribute("aria-selected", b.dataset.tab === name); });
+    document.querySelectorAll(".tabpanel").forEach((p) => (p.hidden = p.id !== `tab-${name}`));
+    if (name === "tot") { stopLayer.remove(); areaLayer.addTo(map); } else { stopLayer.addTo(map); areaLayer.remove(); if (drawing) cancelDraw(); }
+    store.set("tab", name); applyTheme();
+    if (name === "offline") { loadOffline(); scheduleEstimate(); }
+    if (name === "schedule") { loadSchedules(); loadRoutes(); }
+    if (name === "activity") loadActivity();
+    if (name === "place") renderSetup();
+    document.querySelector(".body")?.scrollTo?.({ top: 0 });
+  }
+  document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab, { toggle: true })));
+  $("collapseBtn").onclick = () => setPanelCollapsed(true);
+  $("expandBtn").onclick = () => setPanelCollapsed(false);
+  $("brand").onclick = () => { logoClicks(); };
+  (() => {                                                           // drag the right edge of the card to resize it
+    const r = $("resizer");
+    r.addEventListener("pointerdown", (e) => { r.setPointerCapture(e.pointerId); document.body.classList.add("resizing"); });
+    r.addEventListener("pointermove", (e) => { if (r.hasPointerCapture(e.pointerId)) setPanelWidth(e.clientX - 12); });
+    const end = (e) => { if (!document.body.classList.contains("resizing")) return; document.body.classList.remove("resizing"); store.set("ui.panelw", String(Math.round($("panel").getBoundingClientRect().width))); };
+    r.addEventListener("pointerup", end); r.addEventListener("pointercancel", end);
+    r.addEventListener("dblclick", () => { setPanelWidth(400); store.set("ui.panelw", "400"); });
+  })();
+  window.addEventListener("resize", () => { const w = Number(store.get("ui.panelw")); if (w) setPanelWidth(w); else if (!isMobile()) document.documentElement.style.removeProperty("--panel-w"); });
   document.querySelectorAll("details.howto").forEach((d) => {          // remember which instruction boxes you closed
     if (store.get(`how-${d.id}`) === "closed") d.open = false;
     d.addEventListener("toggle", () => store.set(`how-${d.id}`, d.open ? "open" : "closed"));
@@ -115,15 +203,17 @@
 
   // ---------- pin ----------
   function pinLine() {
-    const t = pin ? `📍 Pin: ${fmt4(pin.getLatLng().lat)}, ${fmt4(pin.getLatLng().lng)}` : "📍 No pin yet — click the map to drop one.";
+    const t = pin ? `📍 ${pinLabel ? pinLabel + " · " : "Pin: "}${fmt4(pin.getLatLng().lat)}, ${fmt4(pin.getLatLng().lng)}` : "📍 No pin yet — click the map to drop one.";
     document.querySelectorAll("[data-pinline]").forEach((e) => (e.textContent = t));
   }
-  function setPin(lat, lon, { pan = false } = {}) {
+  function setPin(lat, lon, { pan = false, label = null } = {}) {
     if (!pin) {
       pin = L.marker([lat, lon], { draggable: true }).addTo(map);
-      pin.on("dragend", () => { const p = pin.getLatLng(); fillInputs(p.lat, p.lng); });
+      pin.on("dragend", () => { const p = pin.getLatLng(); pinLabel = null; fillInputs(p.lat, p.lng); schedulePinLookup(); });
     } else pin.setLatLng([lat, lon]);
+    pinLabel = label || labelFor(lat, lon);
     fillInputs(lat, lon);
+    if (!pinLabel) schedulePinLookup();
     if (pan) map.setView([lat, lon], Math.max(map.getZoom(), 15));
   }
   function fillInputs(lat, lon) { $("lat").value = fmt(lat); $("lon").value = fmt(lon); pinLine(); }
@@ -144,9 +234,9 @@
     try { await fn(); } catch (e) { fail(e); } finally { busy = false; btn.disabled = false; refresh(); }
   }
   $("setBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
-    const c = readInputs();
-    await api("POST", "/api/location", c);
-    toast(`Location set to ${fmt4(c.lat)}, ${fmt4(c.lon)}. Check Apple Maps on the phone.`); loadRecent();
+    const c = readInputs(), label = pinLabel || labelFor(c.lat, c.lon);
+    await api("POST", "/api/location", { ...c, label });
+    toast(`Location set to ${label || fmt4(c.lat) + ", " + fmt4(c.lon)}. Check Apple Maps on the phone.`); loadRecent();
   });
   $("clearBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     await api("DELETE", "/api/location"); centeredOnSim = false; clearRoute(); toast("Simulation stopped — real GPS restored.");
@@ -194,7 +284,10 @@
     status = null; centeredOnSim = false; clearRoute(); if (simMarker) { simMarker.remove(); simMarker = null; }
     renderPhones(); refresh(); toast("Now controlling this phone.");
   }
-  $("device").onclick = () => { $("phonesBox").open = !$("phonesBox").open; };
+  $("device").onclick = () => {
+    if (document.body.classList.contains("panel-collapsed")) setPanelCollapsed(false);
+    const box = $("phonesBox"); box.open = !box.open; if (box.open) { $("panelTop").scrollTo?.({ top: 0 }); box.scrollIntoView?.({ block: "nearest" }); }
+  };
   $("scanBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     toast("Searching the Wi-Fi network… (about 5 seconds)", 6000);
     devices = (await api("POST", "/api/devices/scan")).devices; renderPhones();
@@ -235,7 +328,7 @@
   }
   $("walkBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     const c = readInputs();
-    await startJourney({ stops: [c], mode, speed_kmh: currentSpeed() },
+    await startJourney({ stops: [{ ...c, label: pinLabel || labelFor(c.lat, c.lon) }], mode, speed_kmh: currentSpeed() },
       mode === "straight" ? "Moving in a straight line…" : `Following the ${mode === "walk" ? "walking" : "driving"} route…`);
   });
   $("returnBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
@@ -277,7 +370,8 @@
   }
   function addStop(lat, lon, label, extra = {}) {
     if (stops.length >= 59) return toast("That's the maximum number of stops.");
-    stops.push({ lat, lon, label, ...extra }); renderStops(); toast(`Stop ${stops.length} added — see the Move tab.`);
+    const st = { lat, lon, label, ...extra }; stops.push(st); renderStops(); toast(`Stop ${stops.length} added — see the Move tab.`);
+    if (!label) reverseLabel(lat, lon).then((l) => { if (l && !st.label) { st.label = l; renderStops(); } });
   }
   $("addStopBtn").onclick = () => { try { const c = readInputs(); addStop(c.lat, c.lon); } catch (e) { fail(e); } };
   $("clearStopsBtn").onclick = () => { stops = []; renderStops(); };
@@ -318,7 +412,7 @@
   $("gpxStartBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     if (!gpx) throw { message: "Choose a GPX file first." };
     const jump = $("gpxJump").checked || !status?.simulation?.active;
-    await startJourney({ stops: [], path: gpx.points, mode, speed_kmh: currentSpeed(), jump_to_first: jump }, "Playing the track…");
+    await startJourney({ stops: [], path: gpx.points, mode, speed_kmh: currentSpeed(), jump_to_first: jump, title: gpx.name || "the track" }, "Playing the track…");
   });
   $("saveTrackBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     if (!gpx) throw { message: "Choose a GPX file first." };
@@ -454,7 +548,7 @@
     const visit = houses.filter((h) => !h.lights_off);
     if (!visit.length) throw { message: "Find houses first.", hint: "Press “2 · Find houses”." };
     await startJourney({
-      stops: visit.map((h) => ({ lat: h.lat, lon: h.lon, dwell_s: h.dwell_s })), mode: "walk", speed_kmh: pace.speed_kmh,
+      stops: visit.map((h, i) => ({ lat: h.lat, lon: h.lon, dwell_s: h.dwell_s, label: `house ${i + 1}` })), mode: "walk", speed_kmh: pace.speed_kmh,
       jump_to_first: true, kind: "trick_or_treat", speed_jitter: pace.speed_jitter,
     }, `Happy Halloween! 🎃 Heading to the first house…${settings.tot_kids ? " (with the kids)" : ""}`);
   });
@@ -526,11 +620,11 @@
       const { results } = await api("GET", `/api/search?q=${encodeURIComponent(q)}`);
       if (!results.length) return ul.replaceChildren(li("No results."));
       ul.replaceChildren(...results.map((r) => {
-        const el = li(r.name); el.onclick = () => { setPin(r.lat, r.lon, { pan: true }); ul.hidden = true; };
+        const el = li(r.name); el.onclick = () => { setPin(r.lat, r.lon, { pan: true, label: shortName(r.name) }); ul.hidden = true; };
         el.append(miniBtn("＋", "Add as a stop", () => addStop(r.lat, r.lon, shortName(r.name))), miniBtn("★", "Save to favorites", () => saveFavorite(shortName(r.name), { lat: r.lat, lon: r.lon })));
         return el;
       }));
-      setPin(results[0].lat, results[0].lon, { pan: true });
+      setPin(results[0].lat, results[0].lon, { pan: true, label: shortName(results[0].name) });
     } catch (e) { ul.hidden = true; fail(e); }
   });
 
@@ -541,7 +635,7 @@
   function rows(list, { star }) {
     return list.map((f) => {
       const el = li(f.name); el.title = `${fmt(f.lat)}, ${fmt(f.lon)}`;
-      el.onclick = () => { setPin(f.lat, f.lon, { pan: true }); toast("Pin moved. Go to the Place tab and press Set location."); };
+      el.onclick = () => { setPin(f.lat, f.lon, { pan: true, label: f.name }); toast("Pin moved. Go to the Place tab and press Set location."); };
       el.append(miniBtn("＋", "Add as a stop", () => addStop(f.lat, f.lon, f.name)));
       if (star) el.append(miniBtn("★", "Save to favorites", () => saveFavorite(f.name, { lat: f.lat, lon: f.lon })));
       else el.append(miniBtn("✕", `Delete ${f.name}`, async () => { try { await api("DELETE", `/api/favorites/${f.id}`); loadFavs(); } catch (x) { fail(x); } }));
@@ -600,10 +694,12 @@
       plans = r.plans; nextEvent = r.next; renderPlans(); renderNext();
     } catch { /* the status bar already shows server problems */ }
   }
+  $("nextChip").onclick = () => showTab("schedule"); $("schedNote").onclick = () => showTab("schedule");
   function renderNext() {
     const n = nextEvent;
     const text = n ? `⏰ ${clockText(n.at)} — ${n.title || ({ trick_or_treat: "Trick or treat", move_to: "Walk", route: "Saved route", set_location: "Set location", clear: "Restore real GPS", stop: "Stop" })[n.type]} (${inText(Math.round((Date.parse(n.at) - Date.now()) / 1000))}) · ${n.plan_name}` : "";
     $("schedNote").hidden = !n; $("schedNote").textContent = text;
+    $("nextChip").hidden = !n; if (n) $("nextChip").querySelector(".t").textContent = `⏰ ${clockText(n.at)} · ${inText(Math.round((Date.parse(n.at) - Date.now()) / 1000))}`;
     $("schedNext").textContent = n ? `Next: ${text.slice(2)}` : (plans.some((p) => p.armed) ? "Activated plans have nothing left to run." : "No activated plans. Create one, save it, then switch Activate on.");
   }
   function renderPlans() {
@@ -785,37 +881,81 @@
   }
   setInterval(loadAwake, 5000);
 
-  // ---------- status polling + bottom bar ----------
+  // ---------- status polling ----------
+  // ---------- addresses: what is at a spot (reverse lookup, cached) ----------
+  const addressCache = new Map(), pendingLookups = new Set();
+  const addrKey = (lat, lon) => `${Number(lat).toFixed(4)},${Number(lon).toFixed(4)}`;
+  const labelFor = (lat, lon) => addressCache.get(addrKey(lat, lon)) || null;
+  function reverseLabel(lat, lon) {
+    const k = addrKey(lat, lon);
+    if (addressCache.has(k)) return Promise.resolve(addressCache.get(k) || null);
+    addressCache.set(k, ""); pendingLookups.add(k);                  // "" = looking it up (or it failed)
+    return api("GET", `/api/reverse?lat=${lat}&lon=${lon}`, undefined, { timeout: 12000 })
+      .then((r) => { const l = r.label || shortName(r.name || ""); addressCache.set(k, l); return l || null; })
+      .catch(() => { setTimeout(() => addressCache.delete(k), 30000); return null; })   // try again later (e.g. back online)
+      .finally(() => pendingLookups.delete(k));
+  }
+  let pinTimer = null;
+  function schedulePinLookup() {                                      // give a dropped pin an address in the background
+    clearTimeout(pinTimer);
+    pinTimer = setTimeout(async () => {
+      if (!pin) return;
+      const { lat, lng } = pin.getLatLng(), l = await reverseLabel(lat, lng);
+      if (l && pin && addrKey(pin.getLatLng().lat, pin.getLatLng().lng) === addrKey(lat, lng)) { pinLabel = l; pinLine(); }
+    }, 700);
+  }
+
+  // ---------- the progress dock: always shows what is going on with the location ----------
+  const MODE_ICON = { walk: "🚶", drive: "🚗", straight: "➡️", gpx: "📈" }, MODE_NAME = { walk: "walking", drive: "driving", straight: "straight line", gpx: "track" };
+  const timeText = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   function nowBar(s) {
-    const w = s.walk || {}, sim = s.simulation, tot = w.kind === "trick_or_treat";
-    const where = w.total > 1 ? ` ${w.stop}/${w.total}` : "";
-    let state = "idle", title = "Real GPS", detail = "Your phone is using its real location.";
-    if (sim.reconnecting || w.state === "reconnecting") {
-      state = "reconnecting"; title = "📡 Reconnecting…";
-      detail = settings.auto_reconnect === false ? "Waiting for the iPhone." : "Waiting for the iPhone. The location and route carry on automatically when it is back.";
-    } else if (w.error) { state = "simulating"; title = "Stopped"; detail = w.error.message + (w.error.hint ? ` ${w.error.hint}` : ""); }
+    const w = s.walk || {}, sim = s.simulation || { active: false }, tot = w.kind === "trick_or_treat", dev = s.device;
+    let state = "idle", icon = "🛰", title = "Using your real location", step = "", detail = dev ? `${dev.name} · iOS ${dev.ios_version} · your phone is using its real GPS.` : "Your phone is using its real GPS.", pct = null, eta = null;
+    const speed = (w.cur_speed_kmh ?? w.speed_kmh ?? 0).toFixed(1);
+    const coords = sim.active ? `${fmt4(sim.lat)}, ${fmt4(sim.lon)}` : "";
+    const place = sim.active ? (sim.label || labelFor(sim.lat, sim.lon) || (w.active ? null : (reverseLabel(sim.lat, sim.lon).then((l) => l && status && nowBar(status)), null))) : null;
+    if (s.state === "server_down") { state = "error"; icon = "⚠️"; title = "Can't reach the app"; detail = "The local server isn't answering. Quit the app and open it again."; }
+    else if (sim.reconnecting || w.state === "reconnecting") {
+      state = "reconnecting"; icon = "📡"; title = "Reconnecting to the iPhone…";
+      detail = settings.auto_reconnect === false ? "Waiting for the iPhone." : "Waiting for the phone: the location and trip carry on by themselves when it is back.";
+      if (w.active && w.progress != null) pct = w.progress;
+    } else if (s.state === "connecting" && !sim.active) { state = "connecting"; icon = "🔌"; title = "Connecting to the iPhone…"; detail = "This can take a minute the first time (the disk image is mounted)."; }
+    else if (s.state !== "ready" && !sim.active) { state = "idle"; icon = "🔌"; title = s.error?.message || "No iPhone connected"; detail = s.error?.hint || "Plug in an iPhone to begin."; }
+    else if (w.error) { state = "error"; icon = "⚠️"; title = "The trip stopped"; detail = w.error.message + (w.error.hint ? ` ${w.error.hint}` : ""); }
     else if (w.active && w.state === "waiting") {
-      state = "moving";
-      if (w.reason === "traffic") { title = "🚦 Stopped at a junction"; }
-      else title = tot ? `🎃 At the door — house${where}` : `Paused at stop${where}`;
-      detail = `Moving on in ${fmtSecs(w.wait_left_s)}.`;
+      state = "waiting"; pct = w.progress; eta = w.eta_s; step = w.total > 1 ? `${tot ? "house" : "stop"} ${w.stop}/${w.total}` : "";
+      if (w.reason === "traffic") { icon = "🚦"; title = "Stopped at a junction"; }
+      else if (tot) { icon = "🎃"; title = `At the door of ${w.dest || "a house"}`; }
+      else { icon = "⏸"; title = `Paused at ${w.dest || "a stop"}`; }
+      detail = `Moving on in ${fmtSecs(w.wait_left_s)}${w.progress != null ? ` · ${fmtDist(w.done_m || 0)} of ${fmtDist(w.total_m)} done` : ""}`;
     } else if (w.active) {
-      state = "moving";
-      title = w.returning ? "↩ Returning to start" : tot ? `🎃 Walking to house${where}` : `Moving${where ? ` to stop${where}` : ""}`;
-      detail = `${(w.cur_speed_kmh ?? w.speed_kmh).toFixed(1)} km/h · ${fmtDist(w.remaining_m)} to go${w.loop ? " · looping" : ""}`;
+      state = w.loop ? "looping" : "moving"; pct = w.progress; eta = w.eta_s; step = w.total > 1 ? `${tot ? "house" : "stop"} ${w.stop}/${w.total}` : "";
+      icon = tot ? "🎃" : (MODE_ICON[w.cur_mode || w.mode] || "🚶");
+      const dest = w.dest || (w.total > 1 ? "the next stop" : "the destination");
+      title = w.returning ? "Returning to the start" : w.loop ? `Looping · heading to ${dest}` : `${tot ? "Walking to" : "Heading to"} ${dest}`;
+      detail = (w.total_m ? `${fmtDist(w.done_m || 0)} of ${fmtDist(w.total_m)}` : `${fmtDist(w.remaining_m)} to the next stop`) + ` · ${speed} km/h · ${MODE_NAME[w.cur_mode || w.mode] || ""}${w.loop ? " · looping" : ""}`;
+    } else if (sim.active && w.state === "done") {
+      state = "done"; icon = "✅"; pct = 1; title = `Arrived${sim.label ? " at " + sim.label : ""}`; detail = `Trip finished · ${coords}`;
     } else if (sim.active) {
-      state = "simulating"; title = w.state === "done" ? "Finished — simulating" : "Simulating";
-      detail = `${fmt4(sim.lat)}, ${fmt4(sim.lon)}`;
+      state = "static"; icon = "📍"; pct = 1;
+      title = place ? `Set to ${place}` : `Set to ${coords}`;
+      detail = `${place ? coords + " · " : ""}${sim.since ? "since " + timeText(sim.since * 1000) : "fixed"}${place === null && !sim.label && pendingLookups.has(addrKey(sim.lat, sim.lon)) ? " · looking up the address…" : ""}`;
     }
-    if (s.state === "connecting" && state === "idle") { title = "Connecting to the iPhone…"; detail = "This can take a minute the first time (the disk image is mounted)."; state = "reconnecting"; }
-    $("now").dataset.state = state; $("nowTitle").textContent = title; $("nowDetail").textContent = detail;
-    if (awakeInfo?.active && (w.active || sim.active || state !== "idle")) detail += " · ☕ Mac kept awake";
-    $("nowDetail").textContent = detail;
+    const dock = $("dock"); dock.dataset.state = state;
+    $("dockIcon").textContent = icon; $("nowTitle").textContent = title; $("dockStep").textContent = step;
+    $("nowDetail").textContent = detail + (awakeInfo?.active && state !== "idle" ? " · ☕ Mac kept awake" : "");
+    const fill = pct == null ? 0 : Math.max(0, Math.min(1, pct)) * 100;
+    $("dockfill").style.width = `${fill}%`; $("dockbar").setAttribute("aria-valuenow", String(Math.round(fill)));
+    const etaBox = $("dockEta"); etaBox.hidden = eta == null;
+    if (eta != null) etaBox.innerHTML = `<b>${eta <= 1 ? "arriving" : inText(Math.round(eta))}</b>${eta > 1 ? "arrives " + timeText(Date.now() + eta * 1000) : ""}`;
     $("stopBtn").hidden = !w.active; $("clearBtn").hidden = !sim.active;
     $("returnBtn").hidden = !(sim.origin && !w.active && haversine(sim.origin, [sim.lat, sim.lon]) > 3);   // not when already at the start
     const cd = sim.cooldown;
     $("cooldownNote").hidden = !(settings.cooldown_hint && cd);
     if (cd) $("cooldownNote").textContent = `⏱ Jump cooldown: ${clock(cd.remaining_s)} left · ${cd.km} km jump — a real trip would take about this long.`;
+    $("awakeChip").hidden = !awakeInfo?.active;
+    if (awakeInfo?.active) $("awakeChip").title = `The Mac is being kept awake: ${awakeInfo.reasons.join(", ")}`;
+    document.dispatchEvent(new CustomEvent("locspoof:status", { detail: { status: s, state, awake: awakeInfo } }));
   }
   function render(s) {
     status = s;
@@ -858,6 +998,156 @@
     catch (e) { render({ state: "server_down", error: e, device: null, simulation: { active: false }, walk: {}, warnings: [] }); }
   }
 
+
+  // ---------- settings popover (appearance, map style, fun) ----------
+  const pops = { settings: $("settingsPop"), palette: $("palette"), shortcuts: $("shortcuts") };
+  const scrims = { palette: $("paletteScrim"), shortcuts: $("shortcutsScrim") };
+  const isOpen = (n) => !pops[n].hidden;
+  function openPop(n) {
+    Object.keys(pops).forEach((k) => k !== n && closePop(k));
+    pops[n].hidden = false; if (scrims[n]) scrims[n].hidden = false;
+    if (n === "palette") { $("paletteInput").value = ""; paletteRender(); $("paletteInput").focus(); }
+  }
+  function closePop(n) { pops[n].hidden = true; if (scrims[n]) scrims[n].hidden = true; }
+  const anyOpen = () => Object.keys(pops).some(isOpen);
+  $("settingsBtn").onclick = (e) => { e.stopPropagation(); isOpen("settings") ? closePop("settings") : openPop("settings"); };
+  document.addEventListener("pointerdown", (e) => { if (isOpen("settings") && !pops.settings.contains(e.target) && !$("settingsBtn").contains(e.target)) closePop("settings"); });
+  Object.entries(scrims).forEach(([n, s]) => (s.onclick = () => closePop(n)));
+  document.querySelectorAll("#modeSeg .segbtn").forEach((b) => (b.onclick = () => setUi("mode", b.dataset.colour)));
+  document.querySelectorAll("#accentSwatches button").forEach((b) => (b.onclick = () => setUi("accent", b.dataset.accent)));
+  document.querySelectorAll("#layerSeg .segbtn").forEach((b) => (b.onclick = () => showLayer(b.dataset.layer)));
+  $("seasonalSwitch").onchange = (e) => setUi("seasonal", e.target.checked);
+  $("funSwitch").onchange = (e) => setUi("fun", e.target.checked);
+  $("openShortcuts").onclick = () => openPop("shortcuts");
+  $("openPalette").onclick = () => openPop("palette");
+  $("paletteBtn").onclick = () => openPop("palette");
+  $("openSetup").onclick = () => { closePop("settings"); store.set("setup.hidden", ""); showTab("place"); renderSetup(true); };
+  $("resetUi").onclick = () => { ["mode", "accent", "seasonal", "fun", "layer", "collapsed", "panelw"].forEach((k) => store.set(`ui.${k}`, "")); Object.assign(ui, { mode: "auto", accent: "blue", seasonal: true, fun: true }); document.documentElement.style.removeProperty("--panel-w"); showLayer("street"); toast("Look reset."); };
+
+  // ---------- activity log ----------
+  const dayName = (ts) => { const d = new Date(ts * 1000), t = new Date(); const y = new Date(Date.now() - 864e5);
+    return d.toDateString() === t.toDateString() ? "Today" : d.toDateString() === y.toDateString() ? "Yesterday" : d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }); };
+  async function loadActivity() {
+    let events;
+    try { events = (await api("GET", "/api/activity")).events; } catch (e) { return fail(e); }
+    const ul = $("activityList"); ul.replaceChildren();
+    if (!events.length) { const e = document.createElement("li"); e.className = "daybreak"; e.textContent = "Nothing has happened yet."; ul.append(e); return; }
+    let day = "";
+    for (const ev of events.slice().reverse()) {
+      const dn = dayName(ev.ts);
+      if (dn !== day) { day = dn; const b = document.createElement("li"); b.className = "daybreak"; b.textContent = dn; ul.append(b); }
+      const row = document.createElement("li"); row.dataset.level = ev.level;
+      const ts = document.createElement("span"); ts.className = "ts"; ts.textContent = new Date(ev.ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const tx = document.createElement("span"); tx.className = "tx"; tx.textContent = ev.text;
+      if (ev.phone) { const p = document.createElement("span"); p.className = "ph"; p.textContent = ev.phone; tx.append(p); }
+      row.append(ts, tx); ul.append(row);
+    }
+  }
+  $("activityRefresh").onclick = loadActivity;
+  $("activityClear").onclick = async () => { if (!confirm("Clear the activity log?")) return; try { await api("DELETE", "/api/activity"); loadActivity(); } catch (e) { fail(e); } };
+  setInterval(() => { if (tab === "activity" && document.visibilityState !== "hidden") loadActivity(); }, 5000);
+
+  // ---------- first-run checklist (top of the Place tab) ----------
+  function renderSetup(force = false) {
+    const card = $("setupCard"), s = status;
+    if (!s) { card.hidden = true; return; }
+    const ready = s.state === "ready", mounted = !ready || s.device?.ddi_mounted !== false, online = navigator.onLine !== false;
+    const items = [
+      [!!s.device || ready, "Connect an iPhone with a cable", "Unlock it and tap “Trust” if asked."],
+      [s.state !== "not_trusted", "Trust this computer", "Press the button in the banner above."],
+      [mounted, "Developer disk image ready", "The first connection can take a minute."],
+      [online || ready, "Internet for searches and maps", "Saved offline areas work without it."],
+    ];
+    const done = items.every((i) => i[0]);
+    if ((done && !force) || (store.get("setup.hidden") === "yes" && !force)) { card.hidden = true; return; }
+    card.hidden = false; card.replaceChildren();
+    const h = document.createElement("h3"); h.textContent = done ? "✅ All set" : "Getting started";
+    const x = miniBtn("✕", "Hide this", () => { store.set("setup.hidden", "yes"); card.hidden = true; }); h.append(x); card.append(h);
+    const ul = document.createElement("ul");
+    for (const [ok, t, hint] of items) {
+      const l = document.createElement("li"); if (!ok) l.className = "bad";
+      l.innerHTML = `<span class="mk">${ok ? "✅" : "⬜"}</span><span><b></b><small></small></span>`;
+      l.querySelector("b").textContent = t; l.querySelector("small").textContent = ok ? "" : hint; ul.append(l);
+    }
+    card.append(ul);
+  }
+  document.addEventListener("locspoof:status", () => { if (tab === "place") renderSetup(); });
+
+  // ---------- command palette ----------
+  const TABS = [["place", "📍", "Place"], ["move", "🚶", "Move"], ["tot", "🎃", "Trick or treat"], ["schedule", "⏰", "Schedule"], ["saved", "⭐", "Saved"], ["offline", "📥", "Offline"], ["activity", "📜", "Activity"]];
+  async function patchSetting(key, value) { try { settings = await api("PATCH", "/api/settings", { [key]: value }); applySettings(); toast(`${key.replace(/_/g, " ")}: ${value ? "on" : "off"}`); } catch (e) { fail(e); } }
+  const act = (btn) => () => { const b = $(btn); if (b && !b.hidden && !b.disabled) b.click(); else toast("That isn't available right now."); };
+  const commands = () => {
+    const c = [];
+    TABS.forEach(([t, ic, n], i) => c.push({ ic, t: `Go to ${n}`, hint: String(i + 1), run: () => showTab(t) }));
+    c.push({ ic: "⏹", t: "Stop moving", hint: "Space", run: act("stopBtn") }, { ic: "🛰", t: "Restore real GPS", hint: "R", run: act("clearBtn") }, { ic: "↩", t: "Return to start", hint: "B", run: act("returnBtn") });
+    c.push({ ic: "🎯", t: "Centre map on the phone", hint: "L", run: centreOnPhone }, { ic: "✛", t: "Toggle crosshair", hint: "C", run: () => setCrosshair(!crosshairOn) },
+      { ic: "🗺", t: "Next map style", hint: "M", run: cycleLayer }, { ic: "☰", t: "Hide / show the side card", hint: "\\", run: () => setPanelCollapsed(!document.body.classList.contains("panel-collapsed")) });
+    c.push({ ic: "🌓", t: "Colour mode: auto", run: () => setUi("mode", "auto") }, { ic: "☀", t: "Colour mode: light", run: () => setUi("mode", "light") }, { ic: "🌙", t: "Colour mode: dark", run: () => setUi("mode", "dark") });
+    c.push({ ic: "🎨", t: `Seasonal themes: turn ${ui.seasonal ? "off" : "on"}`, run: () => setUi("seasonal", !ui.seasonal) }, { ic: "🎉", t: `Fun mode: turn ${ui.fun ? "off" : "on"}`, run: () => setUi("fun", !ui.fun) });
+    for (const [k, label] of [["keep_awake", "Keep the Mac awake"], ["auto_reconnect", "Auto-reconnect"], ["realistic_walk", "Realistic walking"]]) if (k in settings) c.push({ ic: "⚙", t: `${label}: turn ${settings[k] ? "off" : "on"}`, run: () => patchSetting(k, !settings[k]) });
+    c.push({ ic: "⚙", t: "Settings", hint: ",", run: () => openPop("settings") }, { ic: "⌨", t: "Keyboard shortcuts", hint: "?", run: () => openPop("shortcuts") }, { ic: "✅", t: "Setup checklist", run: () => $("openSetup").click() });
+    return c;
+  };
+  let palItems = [], palSel = 0, palSeq = 0;
+  function paletteRender() {
+    const q = $("paletteInput").value.trim(), ql = q.toLowerCase(), seq = ++palSeq;
+    let items = commands().filter((c) => !ql || c.t.toLowerCase().includes(ql));
+    const favs = [...document.querySelectorAll("#favs li .name")].map((e) => e.textContent);
+    if (ql) {
+      document.querySelectorAll("#favs li").forEach((li) => { const n = li.querySelector(".name")?.textContent || ""; if (n.toLowerCase().includes(ql)) items.push({ ic: "⭐", t: `Show favorite: ${n}`, run: () => li.querySelector(".name").click?.() || li.click() }); });
+      routesCache.filter((r) => r.name.toLowerCase().includes(ql)).forEach((r) => items.push({ ic: "🛣", t: `Run saved route: ${r.name}`, run: async () => { try { const res = await api("POST", `/api/routes/${r.id}/start`, { jump_to_first: !status?.simulation?.active }); drawRoute(res.route); refresh(); toast(`Running “${r.name}”…`); } catch (e) { fail(e); } } }));
+      items.push({ ic: "🔎", t: `Search for “${q}”`, hint: "Enter", run: () => { showTab("place"); $("searchInput").value = q; $("searchForm").requestSubmit?.(); } });
+      document.dispatchEvent(new CustomEvent("locspoof:palette", { detail: { q: ql, add: (it) => { if (seq === palSeq) { items.unshift(it); draw(); } } } }));
+    }
+    palItems = items.slice(0, 40); palSel = 0; draw();
+    function draw() {
+      palItems = items.slice(0, 40);
+      $("paletteList").replaceChildren(...palItems.map((it, i) => { const l = document.createElement("li"); l.setAttribute("role", "option"); if (i === palSel) l.className = "sel";
+        l.innerHTML = '<span class="ic"></span><span class="t"></span><span class="hint"></span>'; l.querySelector(".ic").textContent = it.ic; l.querySelector(".t").textContent = it.t; l.querySelector(".hint").textContent = it.hint || "";
+        l.onclick = () => runPalette(i); l.onmousemove = () => { palSel = i; markSel(); }; return l; }));
+    }
+  }
+  function markSel() { [...$("paletteList").children].forEach((l, i) => { l.classList.toggle("sel", i === palSel); if (i === palSel) l.scrollIntoView?.({ block: "nearest" }); }); }
+  function runPalette(i) { const it = palItems[i]; if (!it) return; closePop("palette"); try { const r = it.run(); if (r && r.catch) r.catch(fail); } catch (e) { fail(e); } }
+  $("paletteInput").addEventListener("input", paletteRender);
+  $("paletteInput").addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); palSel = Math.min(palSel + 1, palItems.length - 1); markSel(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); palSel = Math.max(palSel - 1, 0); markSel(); }
+    else if (e.key === "Enter") { e.preventDefault(); runPalette(palSel); }
+  });
+
+  // ---------- keyboard shortcuts ----------
+  const typing = (t) => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); isOpen("palette") ? closePop("palette") : openPop("palette"); return; }
+    if (e.key === "Escape") { if (anyOpen()) { Object.keys(pops).forEach(closePop); return; } if (drawing) { cancelDraw(); return; } if (crosshairOn) { setCrosshair(false); return; } return; }
+    if (e.metaKey || e.ctrlKey || e.altKey || typing(e.target) || anyOpen()) return;
+    const k = e.key;
+    if (k >= "1" && k <= String(TABS.length)) showTab(TABS[Number(k) - 1][0]);
+    else if (k === " ") { if (status?.walk?.active) { e.preventDefault(); $("stopBtn").click(); } }
+    else if (k === "r" || k === "R") act("clearBtn")();
+    else if (k === "b" || k === "B") act("returnBtn")();
+    else if (k === "\\") setPanelCollapsed(!document.body.classList.contains("panel-collapsed"));
+    else if (k === "/") { e.preventDefault(); showTab("place"); $("searchInput").focus(); }
+    else if (k === "c" || k === "C") setCrosshair(!crosshairOn);
+    else if (k === "l" || k === "L") centreOnPhone();
+    else if (k === "m" || k === "M") cycleLayer();
+    else if (k === ",") openPop("settings");
+    else if (k === "?") openPop("shortcuts");
+    else if (k === "Enter") { if (drawing && !$("finishBtn").disabled) finishDraw(); else if (crosshairOn) pinAtCenter(); }
+  });
+
+  // ---------- little extras the fun layer hooks into ----------
+  let logoTaps = [];
+  function logoClicks() {
+    const now = Date.now(); logoTaps = logoTaps.filter((t) => now - t < 1500); logoTaps.push(now);
+    document.dispatchEvent(new CustomEvent("locspoof:logo", { detail: { taps: logoTaps.length } }));
+    if (logoTaps.length >= 5) logoTaps = [];
+  }
+  window.addEventListener("online", () => { $("netNote").hidden = true; }); window.addEventListener("offline", () => { $("netNote").hidden = false; });
+  window.locspoof = { ui, toast, openPop, showTab, setUi, get status() { return status; } };
+
   (async function init() {
     try { settings = await api("GET", "/api/settings"); } catch { settings = {}; }
     applySettings();
@@ -865,6 +1155,9 @@
     (function loop() { refresh().finally(() => setTimeout(loop, status?.walk?.active ? 1000 : 3000)); })();
   })();
 
-  showTab(["place", "move", "tot", "schedule", "saved", "offline"].includes(store.get("tab")) ? store.get("tab") : "place");
+  showLayer(ui.layer); applyTheme();
+  { const w = Number(store.get("ui.panelw")); if (w) setPanelWidth(w); }
+  showTab(["place", "move", "tot", "schedule", "saved", "offline", "activity"].includes(store.get("tab")) ? store.get("tab") : "place");
+  if (store.get("ui.collapsed") === "1" && !isMobile()) setPanelCollapsed(true);
   pinLine(); loadFavs(); loadRecent(); loadRoutes(); renderStops(); renderArea(); showGpx();
 })();

@@ -23,7 +23,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 
@@ -371,6 +371,7 @@ class OfflineDownloader:
     def __init__(self, store: OfflineStore, finder: HouseFinder, client: Optional[httpx.AsyncClient] = None, tile_delay: float = 0.3):
         self.store, self.finder, self._client, self.tile_delay = store, finder, client, tile_delay
         self.retry_delay = 0.5
+        self.on_event: Optional[Callable[[str, str], None]] = None     # (text, level) for the activity log
         self.job: dict = {"state": "idle"}
         self._task: Optional[asyncio.Task] = None
 
@@ -428,6 +429,7 @@ class OfflineDownloader:
                 "houses": len(houses), "tile_count": len(tiles), "tiles": [list(t) for t in tiles],
             })
             self.job = {"state": "done", "pack_id": pack_id, "name": name, "done": len(tiles), "total": len(tiles)}
+            self._event("Offline area “%s” saved (%d map tiles, %d houses)" % (name, len(tiles), len(houses)), "info")
             log.info("offline pack %s ready (%d tiles, %d houses, %.1f MB)", pack_id, len(tiles), len(houses), nbytes / 1e6)
         except asyncio.CancelledError:
             shutil.rmtree(self.store.packs_dir / pack_id, ignore_errors=True)
@@ -441,6 +443,14 @@ class OfflineDownloader:
                              "Free some space (or check the drive) and try again.", 507)
             err = e.to_dict() if isinstance(e, AppError) else {"code": "download_failed", "message": f"Download failed: {e}", "hint": None}
             self.job = {"state": "error", "error": err, "name": name}
+            self._event("Offline download of “%s” failed: %s" % (name, err.get("message")), "error")
+
+    def _event(self, text: str, level: str) -> None:
+        if self.on_event is not None:
+            try:
+                self.on_event(text, level)
+            except Exception:
+                log.debug("on_event failed", exc_info=True)
 
     async def _fetch_tile(self, z: int, x: int, y: int) -> Optional[bytes]:
         for attempt in (1, 2):

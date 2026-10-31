@@ -13,7 +13,7 @@ Everything runs on localhost — no accounts, no cloud services, no API keys.
 device status (name, iOS version, clear errors) · click-to-pin map + manual lat/lon · place search ·
 Set / Clear location · **road routes** (walking or driving paths, or a straight line) with adjustable speed ·
 **multi-stop routes** (pauses, looping) · **trick-or-treat mode** (orange theme) · saved favorites ·
-recent locations · **offline areas** (map, houses and streets saved for use without internet) · **realism switches** (GPS noise, natural walking, traffic stops, jump cooldown) · **return trip** · **per-stop speed schedule** · **GPX import** · **saved routes** · **timed plans** (do things at real clock times) · **keeps the Mac awake** when needed · **several phones at once** · **Wi-Fi connection** · **auto-reconnect** · **disk-image warning** · dark mode · phone-friendly layout.
+recent locations · **offline areas** (map, houses and streets saved for use without internet) · **realism switches** (GPS noise, natural walking, traffic stops, jump cooldown) · **return trip** · **per-stop speed schedule** · **GPX import** · **saved routes** · **timed plans** (do things at real clock times) · **keeps the Mac awake** when needed · **several phones at once** · **Wi-Fi connection** · **auto-reconnect** · **disk-image warning** · **always-on progress bar** (address, trip progress, time left) · **top-bar tabs, command palette (Ctrl/⌘ K), keyboard shortcuts, activity log** · light/dark/auto + accent colours · **seasonal themes** · **Fun mode** (confetti, candy counter, little Mac mascot, surprises) · satellite/topo maps · phone-friendly layout.
 
 ## Quick start
 
@@ -104,8 +104,18 @@ Leave it running; the app picks it up on the next click. Force a mode with `pyth
 
 ## Using it
 
-The panel has four tabs, and each one has a **How it works** box (close it once you know the steps; the app remembers).
-The bar at the bottom always shows what the phone is doing, with **Stop moving** and **Restore real GPS** buttons.
+The tabs sit in the bar at the top of the window (on a phone-sized window they move to the bottom). Click the active tab again to hide or show the side card; drag its right edge to resize it (double-click to reset). Each tab has a **How it works** box (close it once you know the steps; the app remembers).
+
+**The progress bar at the bottom is always there** and says exactly what the phone is doing: *Set to Eiffel Tower, Paris since 8:02 PM*, *Heading to Louvre Museum · 340 m of 1.5 km · in 12 min (arrives 8:30 PM)*, *At the door of house 4*, *Stopped at a junction*, *Reconnecting to the iPhone…* or *Using your real location*. Addresses come from OpenStreetMap (a place you searched for keeps its name). It has the **Stop**, **Return** and **Restore real GPS** buttons. The top bar also shows the next scheduled step, a ☕ when the Mac is being kept awake, and the phone.
+
+### Handy extras
+
+* **Command palette**: `Ctrl/⌘ K`, then type anything: a tab, *stop*, *restore*, *dark*, a favorite, a saved route, or an address to search.
+* **Shortcuts** (press `?` to see them all): `1`–`7` tabs · `Space` stop moving · `R` restore real GPS · `B` return to start · `\` hide/show the side card · `/` search · `C` crosshair (precise pin) · `L` centre on the phone · `M` next map style · `,` settings.
+* **⚙ Settings** (top right): light / dark / auto, accent colour, seasonal themes on/off, map style (street, satellite, topo), **Fun mode**, the setup checklist and a reset.
+* **📜 Activity** tab: a log of what happened and when (phone connected, location set, trips, schedule steps, Mac asleep…).
+* Seasonal themes switch themselves on: orange for Halloween in October, snowy in December, hearts in February (turn off in Settings). Trick-or-treat always turns the app orange.
+* **Fun mode** (on by default, one switch to turn it off): confetti when a trip ends, a 🍬 candy counter in the top bar while trick-or-treating, a tiny Mac that sleeps when your Mac slept, sips coffee while the Mac is kept awake and wears a seasonal hat, falling leaves, snow or hearts, and a few surprises nobody will tell you about. 🤫
 
 * **📍 Place**: click the map or search to drop a pin (drag it to fine-tune), then **Set location**.
 * **🚶 Move**: pick **Straight line**, **Walking** or **Driving** (the last two follow real roads from OpenStreetMap and are
@@ -299,7 +309,8 @@ locspoof/schedule.py   timed plans: store, validation, scheduler
 locspoof/awake.py      keep the Mac awake (caffeinate) and notice sleep
 locspoof/memory.py     per phone: last iOS version, and the fake location an old iOS phone may still hold
 locspoof/fileio.py     crash-safe file writing used by every data file
-locspoof/geocode.py    Nominatim client (User-Agent, rate limit, cache)
+locspoof/activity.py   the activity log
+locspoof/geocode.py    Nominatim client: search + reverse (User-Agent, rate limit, cache)
 locspoof/favorites.py  JSON favorites store
 locspoof/movement.py   great-circle math
 locspoof/server.py     FastAPI routes
@@ -308,7 +319,7 @@ locspoof/desktop.py    native window (pywebview) launcher
 desktop.py             entry point for the window app
 make_app.sh            builds the double-clickable Mac app
 assets/icon.png        app icon (regenerate with tools/make_icon.py)
-static/                the single-page UI (Leaflet vendored in static/vendor)
+static/                the single-page UI: index.html, app.js, style.css; fun.js/fun.css = Fun mode (Leaflet vendored in static/vendor)
 tests/                 pytest suite
 ```
 

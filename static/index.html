@@ -3,21 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
   <title>iPhone Location Simulator</title>
+  <link rel="icon" href="/static/icon.png">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=16">
+  <link rel="stylesheet" href="/static/style.css?v=21">
+  <link rel="stylesheet" href="/static/fun.css?v=21">
 </head>
 <body>
+  <!-- ======================= top bar ======================= -->
+  <header id="topbar">
+    <button id="brand" title="iPhone Location"><img src="/static/icon.png" alt=""><span>iPhone Location</span></button>
+    <nav id="tabs" role="tablist" aria-label="Sections">
+      <button role="tab" data-tab="place" title="Place  ·  press 1"><span class="ti">📍</span><span class="tl">Place</span></button>
+      <button role="tab" data-tab="move" title="Move  ·  press 2"><span class="ti">🚶</span><span class="tl">Move</span></button>
+      <button role="tab" data-tab="tot" title="Trick or treat  ·  press 3"><span class="ti">🎃</span><span class="tl">Trick or treat</span></button>
+      <button role="tab" data-tab="schedule" title="Schedule  ·  press 4"><span class="ti">⏰</span><span class="tl">Schedule</span></button>
+      <button role="tab" data-tab="saved" title="Saved  ·  press 5"><span class="ti">★</span><span class="tl">Saved</span></button>
+      <button role="tab" data-tab="offline" title="Offline  ·  press 6"><span class="ti">⬇️</span><span class="tl">Offline</span></button>
+      <button role="tab" data-tab="activity" title="Activity  ·  press 7"><span class="ti">📜</span><span class="tl">Activity</span></button>
+    </nav>
+    <div id="topright">
+      <span id="candy" class="pill" hidden title="Houses visited while trick-or-treating">🍬 <b id="candyN">0</b></span>
+      <button id="nextChip" class="chip hide-md" hidden title="Next scheduled step"><span class="t"></span></button>
+      <span id="awakeChip" class="pill hide-sm" hidden title="The Mac is being kept awake">☕</span>
+      <button id="device" class="chip" data-state="loading" title="Phones &amp; connection"><span class="dot"></span><span id="deviceText">Checking…</span><span id="phoneCount" class="count" hidden></span></button>
+      <button id="paletteBtn" class="iconbtn hide-sm" title="Command palette (Ctrl/⌘ K)"><kbd>⌘K</kbd></button>
+      <button id="settingsBtn" class="iconbtn" title="Settings &amp; appearance">⚙</button>
+    </div>
+  </header>
+
+  <!-- ======================= map ======================= -->
   <div id="map" aria-label="Map"></div>
   <div id="vignette"></div>
+  <div id="crosshair" hidden><i></i></div>
   <div id="totBanner" hidden>🎃 Trick-or-treat mode</div>
 
+  <!-- ======================= side card ======================= -->
   <aside id="panel">
-    <header>
-      <h1>iPhone Location</h1>
-      <button id="device" class="chip" data-state="loading" title="Phones & connection"><span class="dot"></span><span id="deviceText">Checking…</span><span id="phoneCount" class="count" hidden></span></button>
-    </header>
-
+    <button id="collapseBtn" title="Hide the side card (\)" aria-label="Hide the side card">‹</button>
+    <div id="resizer" title="Drag to resize"></div>
+    <div id="panelTop">
     <details id="phonesBox" class="phones">
       <summary>📱 Phones &amp; connection</summary>
       <ul id="phoneList" class="list"></ul>
@@ -58,23 +84,13 @@
       <button id="trustBtn" class="secondary" hidden>Trust this computer</button>
     </div>
 
-    <p id="netNote" class="netnote" hidden>📡 No internet connection — saved offline areas still work.</p>
-
     <p id="sleepNote" class="notice" hidden></p>
     <div id="notice" class="notice" hidden>
       <strong id="noticeMsg"></strong>
       <p id="noticeHint"></p>
     </div>
 
-    <nav id="tabs" role="tablist">
-      <button role="tab" data-tab="place" class="active">📍<span>Place</span></button>
-      <button role="tab" data-tab="move">🚶<span>Move</span></button>
-      <button role="tab" data-tab="tot">🎃<span>Trick or treat</span></button>
-      <button role="tab" data-tab="schedule">⏰<span>Schedule</span></button>
-      <button role="tab" data-tab="saved">★<span>Saved</span></button>
-      <button role="tab" data-tab="offline">⬇️<span>Offline</span></button>
-    </nav>
-
+    </div>
     <div class="body">
       <!-- ============ PLACE ============ -->
       <section id="tab-place" class="tabpanel">
@@ -86,6 +102,7 @@
             <li>Press <b>Restore real GPS</b> (bottom bar) when you are done.</li>
           </ol>
         </details>
+        <div id="setupCard" hidden></div>
         <form id="searchForm" role="search" class="inline">
           <input id="searchInput" type="search" placeholder="Search a place or address…" autocomplete="off" aria-label="Search places">
           <button type="submit" class="secondary">Search</button>
@@ -318,25 +335,109 @@
         <h2>Saved areas</h2>
         <ul id="offList" class="list"></ul>
       </section>
+    
+      <!-- ============ ACTIVITY ============ -->
+      <section id="tab-activity" class="tabpanel" hidden>
+        <details class="howto" id="how-activity" open>
+          <summary>How it works</summary>
+          <p>A timeline of what the app did and when: locations set, trips started and finished, the phone connecting or dropping, scheduled steps running, the Mac sleeping, offline downloads. Use it to see exactly what happened while you were away.</p>
+        </details>
+        <div class="row opts">
+          <button id="activityRefresh" class="secondary">↻ Refresh</button>
+          <button id="activityClear" class="secondary">🗑 Clear</button>
+        </div>
+        <ul id="activityList"></ul>
+      </section>
     </div>
-
-    <p id="schedNote" class="netnote" hidden></p>
-    <p id="cooldownNote" class="netnote" hidden></p>
-    <footer id="now" data-state="idle">
-      <div class="nowtext">
-        <strong id="nowTitle">Real GPS</strong>
-        <span id="nowDetail">Your phone is using its real location.</span>
-      </div>
-      <div class="nowbtns">
-        <button id="stopBtn" class="secondary" hidden>Stop moving</button>
-        <button id="clearBtn" class="danger" hidden>Restore real GPS</button>
-      </div>
-    </footer>
   </aside>
+  <button id="expandBtn" hidden title="Show the side card (\)">☰ Panel</button>
+
+  <!-- ======================= always-on progress dock ======================= -->
+  <section id="dock" data-state="idle" aria-live="polite">
+    <div class="dockmain">
+      <span id="dockIcon">🛰</span>
+      <div class="docktext">
+        <div class="dockline"><strong id="nowTitle">Using your real location</strong><span id="dockStep" class="dockstep"></span></div>
+        <div id="dockbar" class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i id="dockfill"></i></div>
+        <div id="nowDetail" class="dockdetail">Your phone is using its real GPS.</div>
+      </div>
+    </div>
+    <div class="dockright">
+      <div id="dockEta" hidden></div>
+      <div class="dockbtns">
+        <button id="stopBtn" class="secondary" hidden title="Stop moving (Space)">⏹ Stop</button>
+        <button id="returnBtn" class="secondary" hidden title="Go back to where the trip started">↩ Return</button>
+        <button id="clearBtn" class="danger" hidden title="Restore real GPS (R)">Restore real GPS</button>
+      </div>
+    </div>
+    <div class="dockchips">
+<p id="netNote" class="netnote" hidden>📡 No internet connection — saved offline areas still work.</p>
+<p id="schedNote" class="netnote" hidden></p>
+<p id="cooldownNote" class="netnote" hidden></p>
+    </div>
+  </section>
+
+  <!-- ======================= settings popover ======================= -->
+  <div id="settingsPop" class="pop" hidden role="dialog" aria-label="Settings">
+    <h3>Appearance</h3>
+    <div class="seg" id="modeSeg" role="radiogroup" aria-label="Colour mode">
+      <button class="segbtn" data-colour="auto">Auto</button><button class="segbtn" data-colour="light">☀ Light</button><button class="segbtn" data-colour="dark">🌙 Dark</button>
+    </div>
+    <h3>Accent colour</h3>
+    <div class="swatches" id="accentSwatches">
+      <button data-accent="blue" style="background:#0a84ff" title="Blue"></button><button data-accent="purple" style="background:#8b5cf6" title="Purple"></button>
+      <button data-accent="green" style="background:#16a34a" title="Green"></button><button data-accent="teal" style="background:#0d9488" title="Teal"></button>
+      <button data-accent="pink" style="background:#ec4899" title="Pink"></button><button data-accent="orange" style="background:#f97316" title="Orange"></button>
+    </div>
+    <label class="sw"><input type="checkbox" id="seasonalSwitch"><span class="track"></span>
+      <span><b>Seasonal themes</b><small>Orange for Halloween in October, snowy in December, hearts in February. Off = always your own colours.</small></span></label>
+    <h3>Map style</h3>
+    <div class="seg" id="layerSeg" role="radiogroup" aria-label="Map style">
+      <button class="segbtn" data-layer="street">🗺 Street</button><button class="segbtn" data-layer="satellite">🛰 Satellite</button><button class="segbtn" data-layer="topo">⛰ Topo</button>
+    </div>
+    <p class="muted">Street maps can be saved for offline use; satellite and topo need the internet.</p>
+    <h3>Fun</h3>
+    <label class="sw"><input type="checkbox" id="funSwitch"><span class="track"></span>
+      <span><b>🎉 Fun mode</b><small>The little Mac, confetti, candy counter, falling snow or hearts… and a few secret surprises. Off = a plain, serious app.</small></span></label>
+    <h3>Help</h3>
+    <div class="row"><button id="openShortcuts" class="secondary">⌨ Shortcuts</button><button id="openPalette" class="secondary">⌘K Palette</button></div>
+    <div class="row opts"><button id="openSetup" class="secondary">✅ Setup checklist</button><button id="resetUi" class="secondary">↺ Reset look</button></div>
+  </div>
+
+  <!-- ======================= command palette ======================= -->
+  <div id="paletteScrim" class="scrim" hidden></div>
+  <div id="palette" class="modal" hidden role="dialog" aria-label="Command palette">
+    <input id="paletteInput" placeholder="Type a command, a saved place, or an address…" autocomplete="off" spellcheck="false" aria-label="Command palette">
+    <ul id="paletteList" role="listbox"></ul>
+    <div class="foot"><span><kbd>↑</kbd> <kbd>↓</kbd> choose</span><span><kbd>Enter</kbd> run</span><span><kbd>Esc</kbd> close</span></div>
+  </div>
+
+  <!-- ======================= keyboard shortcuts ======================= -->
+  <div id="shortcutsScrim" class="scrim" hidden></div>
+  <div id="shortcuts" class="modal" hidden role="dialog" aria-label="Keyboard shortcuts">
+    <h3>Keyboard shortcuts</h3>
+    <div class="keys">
+      <div><span>Command palette</span><span><kbd>Ctrl/⌘</kbd> <kbd>K</kbd></span></div>
+      <div><span>Go to a tab</span><span><kbd>1</kbd>–<kbd>7</kbd></span></div>
+      <div><span>Stop moving</span><span><kbd>Space</kbd></span></div>
+      <div><span>Restore real GPS</span><span><kbd>R</kbd></span></div>
+      <div><span>Return to start</span><span><kbd>B</kbd></span></div>
+      <div><span>Hide / show the side card</span><span><kbd>\</kbd></span></div>
+      <div><span>Search for a place</span><span><kbd>/</kbd></span></div>
+      <div><span>Crosshair (precise pin)</span><span><kbd>C</kbd></span></div>
+      <div><span>Centre on the phone</span><span><kbd>L</kbd></span></div>
+      <div><span>Next map style</span><span><kbd>M</kbd></span></div>
+      <div><span>Settings</span><span><kbd>,</kbd></span></div>
+      <div><span>This cheat sheet</span><span><kbd>?</kbd></span></div>
+      <div><span>Close / cancel drawing</span><span><kbd>Esc</kbd></span></div>
+      <div><span>Finish drawing an area</span><span><kbd>Enter</kbd></span></div>
+    </div>
+  </div>
 
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/app.js?v=16"></script>
+  <script src="/static/fun.js?v=21"></script>
+  <script src="/static/app.js?v=21"></script>
 </body>
 </html>

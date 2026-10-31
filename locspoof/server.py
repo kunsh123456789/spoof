@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from .device import Backend, DeviceManager, JourneyPlan, PmdBackend, Stop
 from .fleet import Fleet
 from .memory import DeviceMemory
+from .activity import ActivityLog
 from .awake import KeepAwake, SleepWatch
 from .errors import AppError
 from .favorites import FavoritesStore
@@ -65,6 +66,7 @@ class JourneyRequest(BaseModel):
     return_to_start: bool = False
     path: Optional[list[list[float]]] = None   # exact GPX polyline [[lat, lon], ...]
     realism: Optional[dict[str, bool]] = None  # switches for this trip only (noise / natural_walk / traffic_stops)
+    title: Optional[str] = None                # a name for the whole trip (shown in the progress bar)
 
 
 class RouteRequest(BaseModel):
@@ -150,6 +152,7 @@ def create_app(
     keep_awake: Optional[KeepAwake] = None,
     sleep_watch: Optional[SleepWatch] = None,
     awake_interval: float = 2.5,
+    activity_path: Optional[Path] = None,
     ambient_tick: float = 2.5,
     rng=None,
     tile_client: Optional[httpx.AsyncClient] = None,
@@ -162,13 +165,14 @@ def create_app(
     settings = SettingsStore(settings_path or ROOT / "settings.json")
     routes = RoutesStore(routes_path or ROOT / "routes.json")
     schedules = SchedulesStore(schedules_path or ROOT / "schedules.json")
+    activity = ActivityLog(activity_path or ROOT / "activity.json")
     awake = keep_awake if keep_awake is not None else KeepAwake()
     watch = sleep_watch if sleep_watch is not None else SleepWatch()
     memory = DeviceMemory(devices_path or ROOT / "devices.json")
 
     def make_manager(be: Backend) -> DeviceManager:
         return DeviceManager(
-            be, walk_tick=walk_tick, settings=settings.data, ambient_tick=ambient_tick, rng=rng, memory=memory,
+            be, walk_tick=walk_tick, settings=settings.data, ambient_tick=ambient_tick, rng=rng, memory=memory, activity=activity,
             on_finish=lambda lat, lon: recents.add(lat, lon, "Route end"),
         )
 
@@ -186,6 +190,7 @@ def create_app(
     road_router = router or Router(offline=offline)
     houses = house_finder or HouseFinder(offline=offline)
     downloader = OfflineDownloader(offline, houses, client=tile_client, tile_delay=tile_delay)
+    downloader.on_event = lambda text, level: activity.add(text, kind="offline", level=level)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -254,7 +259,7 @@ def create_app(
     @app.post("/api/location")
     async def set_location(body: LocationRequest, manager: DeviceManager = Depends(get_manager)):
         validate_coords(body.lat, body.lon)
-        result = await manager.set_location(body.lat, body.lon)
+        result = await manager.set_location(body.lat, body.lon, body.label)
         recents.add(body.lat, body.lon, body.label)
         return result
 
@@ -263,7 +268,7 @@ def create_app(
         return await manager.clear_location()
 
     def plan_from(body: JourneyRequest) -> JourneyPlan:
-        stops = [Stop(x.lat, x.lon, x.dwell_s, x.mode or None, x.speed_kmh or None) for x in body.stops]
+        stops = [Stop(x.lat, x.lon, x.dwell_s, x.mode or None, x.speed_kmh or None, (x.label or None)) for x in body.stops]
         path = None
         if body.path:
             path = [tuple(p) for p in body.path if len(p) == 2]
@@ -273,6 +278,7 @@ def create_app(
         return JourneyPlan(
             stops=stops, mode=body.mode, speed_kmh=body.speed_kmh, loop=body.loop, jump_to_first=body.jump_to_first,
             kind=body.kind, speed_jitter=body.speed_jitter, return_to_start=body.return_to_start, path=path, realism=body.realism,
+            title=(body.title or None),
         )
 
     def route_request(r: dict, jump: bool) -> JourneyRequest:
@@ -280,7 +286,7 @@ def create_app(
         return JourneyRequest(
             stops=[StopModel(**{k: v for k, v in s_.items() if k in StopModel.model_fields}) for s_ in r["stops"]],
             path=r.get("path"), mode=r["mode"], speed_kmh=r["speed_kmh"], loop=r.get("loop", False),
-            return_to_start=r.get("return_to_start", False), jump_to_first=jump,
+            return_to_start=r.get("return_to_start", False), jump_to_first=jump, title=r.get("name"),
         )
 
     async def run_journey(body: JourneyRequest, manager: DeviceManager):
@@ -362,13 +368,13 @@ def create_app(
         manager = await fleet.get(plan.get("device") or None)
         t, p = step["type"], step["params"]
         if t == "set_location":
-            await manager.set_location(p["lat"], p["lon"])
+            await manager.set_location(p["lat"], p["lon"], p.get("label") or None)
             recents.add(p["lat"], p["lon"], p.get("label") or None)
             return "Location set to " + (p.get("label") or "%.5f, %.5f" % (p["lat"], p["lon"])) + "."
         if t == "move_to":
             if p.get("start"):
                 await manager.set_location(p["start"]["lat"], p["start"]["lon"])
-            req = JourneyRequest(stops=[StopModel(lat=p["lat"], lon=p["lon"])], mode=p["mode"], speed_kmh=p["speed_kmh"],
+            req = JourneyRequest(stops=[StopModel(lat=p["lat"], lon=p["lon"], label=p.get("label") or None)], mode=p["mode"], speed_kmh=p["speed_kmh"],
                                  realism={"noise": True, "natural_walk": True} if p.get("shaky") else None)
             await run_journey(req, manager)
             return "Heading to %s at %g km/h (%s%s)." % (p.get("label") or "the destination", p["speed_kmh"], p["mode"], ", shaky" if p.get("shaky") else "")
@@ -383,7 +389,7 @@ def create_app(
             res = await plan_tot(body, {"realistic": p["realistic"], "kids": p["kids"], "avoid_busy": p["avoid_busy"]})
             visit = [h for h in res["houses"] if not h["lights_off"]]
             req = JourneyRequest(
-                stops=[StopModel(lat=h["lat"], lon=h["lon"], dwell_s=h["dwell_s"]) for h in visit], mode="walk",
+                stops=[StopModel(lat=h["lat"], lon=h["lon"], dwell_s=h["dwell_s"], label="house %d" % (i + 1)) for i, h in enumerate(visit)], mode="walk",
                 speed_kmh=res["pace"]["speed_kmh"], jump_to_first=True, kind="trick_or_treat", speed_jitter=res["pace"]["speed_jitter"],
             )
             await run_journey(req, manager)
@@ -394,13 +400,22 @@ def create_app(
         await manager.stop_walk()
         return "Stopped moving."
 
-    scheduler = Scheduler(schedules, execute_step, clock=schedule_clock, tick_every=schedule_tick, retry_every=schedule_retry)
+    def on_step_event(plan: dict, step: dict, status: str, note: str) -> None:
+        verb = {"running": "started", "done": "done", "error": "failed", "missed": "missed", "skipped": "skipped"}.get(status, status)
+        activity.add("⏰ %s · %s: %s%s" % (plan["name"], step["title"] or step["type"].replace("_", " "), verb, (" — " + note) if note else ""),
+                     kind="schedule", level="error" if status == "error" else "warn" if status in ("missed", "skipped") else "info")
+
+    scheduler = Scheduler(schedules, execute_step, clock=schedule_clock, tick_every=schedule_tick, retry_every=schedule_retry, on_event=on_step_event)
     app.state.scheduler = scheduler
     app.state.awake = awake
 
+    awake_was = {"on": False}
+
     async def awake_tick() -> None:
         """Decide whether the Mac must stay awake, and notice if it slept (then re-check every phone at once)."""
-        if watch.check() is not None:
+        slept = watch.check()
+        if slept is not None:
+            activity.add("💤 The Mac was asleep for about %d min: re-checking the phone" % max(round(slept / 60), 1), kind="mac", level="warn")
             for m in fleet.all_managers():
                 m.on_wake()
         reasons: list[str] = []
@@ -408,7 +423,11 @@ def create_app(
             reasons += m.awake_reasons()
         if scheduler.wants_awake():
             reasons.append("an activated schedule is waiting")
-        awake.update(settings.data["keep_awake"] and bool(reasons), reasons, settings.data["keep_screen_on"])
+        want = settings.data["keep_awake"] and bool(reasons)
+        awake.update(want, reasons, settings.data["keep_screen_on"])
+        if want != awake_was["on"]:
+            awake_was["on"] = want
+            activity.add("☕ Keeping the Mac awake: %s" % ", ".join(reasons) if want else "The Mac may sleep again", kind="mac")
 
     async def awake_loop() -> None:
         while True:
@@ -558,6 +577,21 @@ def create_app(
             raise AppError("not_found", "Saved route not found.", status=404)
         jump = body.jump_to_first if body.jump_to_first is not None else False
         return await run_journey(route_request(r, jump), manager)
+
+    @app.get("/api/reverse")
+    async def reverse(lat: float, lon: float):
+        """What is at this spot? Used to show an address in the progress bar."""
+        validate_coords(lat, lon)
+        return await geo.reverse(lat, lon)
+
+    @app.get("/api/activity")
+    async def get_activity(after: int = 0):
+        return {"events": activity.list(after), "last_id": activity.last_id}
+
+    @app.delete("/api/activity")
+    async def clear_activity():
+        activity.clear()
+        return {"ok": True}
 
     @app.get("/api/recent")
     async def list_recent():

@@ -593,9 +593,10 @@ class DeviceManager:
         self, backend: Backend, walk_tick: float = WALK_TICK_S,
         on_finish: Optional[Callable[[float, float], None]] = None,
         settings: Optional[dict] = None, ambient_tick: float = AMBIENT_TICK_S, rng: Optional[random.Random] = None,
-        memory: Any = None,
+        memory: Any = None, activity: Any = None,
     ):
         self.backend = backend
+        self.activity = activity                                         # ActivityLog (optional)
         self.walk_tick = walk_tick
         self.ambient_tick = ambient_tick
         self.on_finish = on_finish  # called with the final position when a journey completes
@@ -608,6 +609,10 @@ class DeviceManager:
         self._last_base: Optional[dict] = None                 # the last "ready"/error part of status
         self._stop_requested = False                           # asks the running trip to stop at a safe point
         self._realism_override: dict = {}                      # switches that apply to the running trip only
+        self._position_label: Optional[str] = None             # what to call the simulated spot (an address, a place name)
+        self._position_since: Optional[float] = None           # when it was put there
+        self._total_m: Optional[float] = None                  # length of the whole planned trip (for the progress bar)
+        self._phone_state: Optional[str] = None                # last phone state, to log connect/disconnect once
         self._sim_saved = float("-inf")                        # when the position was last written to devices.json
         self._stale_notice = False                             # the position came from a previous session (app was killed)
         self._rng = rng or random.Random()
@@ -620,11 +625,20 @@ class DeviceManager:
         self._origin: Optional[tuple[float, float]] = None     # where the last journey started (for "return")
         self._last_plan: Optional["JourneyPlan"] = None
         self._lost = False                                     # phone vanished; will restore when it returns
+        self._outage_logged = False                            # the activity log already says it was lost
         self._cooldown: Optional[dict] = None
         self._walk_task: Optional[asyncio.Task] = None
         self._ambient_task: Optional[asyncio.Task] = None
         self._walk: dict = {}
         self._status_cache: tuple[float, dict] | None = None
+
+    def _note(self, text: str, level: str = "info", kind: str = "info") -> None:
+        """Add a line to the activity log (the timeline in the Activity tab)."""
+        if self.activity is not None:
+            try:
+                self.activity.add(text, kind=kind, level=level, phone=self._info.name if self._info else None)
+            except Exception:
+                log.debug("could not write to the activity log", exc_info=True)
 
     def _on(self, key: str) -> bool:
         """A realism/option switch: this trip's own override if it has one, else the global setting."""
@@ -691,7 +705,19 @@ class DeviceManager:
                     await self._device_gone()
         self._last_base = base
         self._status_cache = (time.monotonic(), base)
+        self._note_phone_state(base)
         return self._compose(base)
+
+    def _note_phone_state(self, base: dict) -> None:
+        state = base.get("state")
+        if state == self._phone_state or state == "connecting":
+            return
+        first = self._phone_state is None
+        self._phone_state = state
+        if state == "ready":
+            self._note("iPhone connected: %s" % (self._info.name if self._info else "iPhone"), kind="phone")
+        elif not first or state != "ready":
+            self._note("iPhone not ready: %s" % ((base.get("error") or {}).get("message") or state), level="warn", kind="phone")
 
     def _compose(self, base: dict) -> dict:
         """The answer for /api/status: the phone part plus the live simulation/trip state (and the stale-location notice)."""
@@ -758,6 +784,10 @@ class DeviceManager:
         sim: dict = {"active": self._position is not None}
         if self._position:
             sim["lat"], sim["lon"] = self._position
+            if self._position_label:
+                sim["label"] = self._position_label
+            if self._position_since:
+                sim["since"] = self._position_since
             if self._lost:
                 sim["reconnecting"] = True
             if self._origin:
@@ -863,13 +893,18 @@ class DeviceManager:
                     await self._run(lambda s: s.set(*send))
                     self._position = (lat, lon)
                 self._remember_sim()
-                self._lost = False
+                if self._lost or self._outage_logged:
+                    self._note("iPhone reconnected: the location and trip carry on", kind="phone")
+                self._lost = False; self._outage_logged = False
                 if self._walk.get("state") == "reconnecting":
                     self._walk["state"] = "moving"
                 return
             except AppError as e:
                 if not (self._on("auto_reconnect") and e.code in TRANSIENT_CODES) or time.monotonic() > deadline:
                     raise
+                if not self._outage_logged:                # (_run may already have set _lost, so it can't be the test)
+                    self._note("Lost the connection to the iPhone: waiting for it to come back", level="warn", kind="phone")
+                    self._outage_logged = True
                 self._lost = True
                 self._walk["state"] = "reconnecting"
                 await asyncio.sleep(self.reconnect_poll)
@@ -877,7 +912,7 @@ class DeviceManager:
 
     # -- public operations ------------------------------------------------------------------
 
-    async def set_location(self, lat: float, lon: float) -> dict:
+    async def set_location(self, lat: float, lon: float, label: Optional[str] = None) -> dict:
         validate_coords(lat, lon)
         await self._stop_journey()
         prev = self._position
@@ -887,8 +922,10 @@ class DeviceManager:
             self._lost = False
         self._note_jump(prev, (lat, lon))
         self._stale_notice = False
+        self._position_label, self._position_since = (label or None), time.time()
         self._remember_sim(force=True)
         self._ensure_ambient()
+        self._note("Location set to %s" % (label or "%.5f, %.5f" % (lat, lon)), kind="location")
         log.info("location set to %.6f, %.6f", lat, lon)
         self._status_cache = None
         return self._sim_state()
@@ -909,7 +946,9 @@ class DeviceManager:
             self._cooldown = None
             self._lost = False
             self._stale_notice = False
+            self._position_label = self._position_since = None
             self._forget_sim()
+        self._note("Real GPS restored", kind="location")
         log.info("location simulation cleared (session was %s)", "open" if had_session else "closed")
         self._status_cache = None
         return self._sim_state()
@@ -1062,9 +1101,12 @@ class DeviceManager:
                     leg.returning = True
                 legs += back
 
+        self._annotate_legs(legs, stops, plan, cycle)
         if plan.jump_to_first:
             # Only teleport once every route is known to work, so a routing failure never strands the phone.
-            await self.set_location(*origin)
+            await self.set_location(*origin, label=(plan.title if path else stops[0].label))
+        self._position_label = None                        # in transit: no fixed place any more
+        self._total_m = None if cycle else sum(l.length_m for l in legs)
         self._origin = origin
         self._last_plan = plan
         self._stale_notice = False
@@ -1074,10 +1116,44 @@ class DeviceManager:
         self._walk = {
             "kind": plan.kind, "mode": plan.mode, "speed_kmh": speed, "cur_speed_kmh": speed, "loop": bool(cycle),
             "total": 1 if path else len(stops), "stop": first_target, "state": "moving", "remaining_m": 0.0,
-            "wait_left_s": 0.0, "returning": False, "reason": None,
+            "wait_left_s": 0.0, "returning": False, "reason": None, "total_m": self._total_m, "done_m": 0.0, "progress": 0.0 if self._total_m else None,
+            "eta_s": None, "dest": legs[0].label if legs else (stops[0].label if stops else None), "title": plan.title, "cur_mode": legs[0].mode if legs else plan.mode,
         }
+        self._note(self._describe_trip(plan, legs, cycle), kind="trip")
         self._walk_task = asyncio.create_task(self._journey_loop(plan, first_dwell, legs, cycle))
         return self._sim_state()
+
+    @staticmethod
+    def _annotate_legs(legs: "list[_Leg]", stops: "list[Stop]", plan: "JourneyPlan", cycle: "list[_Leg]") -> None:
+        """Give every leg its length, its place in the whole trip, what it is heading to, and the pauses still ahead."""
+        total, acc = len(legs), 0.0
+        for i, leg in enumerate(legs):
+            leg.length_m = sum(haversine_m(*a, *b) for a, b in zip(leg.points, leg.points[1:]))
+            leg.start_m, acc = acc, acc + leg.length_m
+            leg.dwell_after_s = sum(l.dwell_s for l in legs[i + 1:])
+            if leg.returning:
+                leg.label = "the start"
+            elif leg.mode == "gpx":
+                leg.label = plan.title or "the track"
+            elif leg.index < len(stops):
+                leg.label = stops[leg.index].label
+        for leg in cycle:                                    # a looping trip has no end: no total, no ETA
+            leg.length_m = sum(haversine_m(*a, *b) for a, b in zip(leg.points, leg.points[1:]))
+            leg.label = stops[leg.index].label if leg.index < len(stops) else None
+
+    @staticmethod
+    def _describe_trip(plan: "JourneyPlan", legs: "list[_Leg]", cycle: "list[_Leg]") -> str:
+        if plan.kind == "trick_or_treat":
+            return "Trick-or-treat started: %d houses" % len(plan.stops)
+        what = "GPX track %s" % (plan.title or "") if plan.path else ("%d stops" % len(plan.stops) if len(plan.stops) > 1 else (plan.stops[0].label or "the destination"))
+        return "Trip started: %s %s at %g km/h%s" % (plan.mode, "to " + what if not plan.path else what, plan.speed_kmh, " (looping)" if cycle else "")
+
+    def _eta_s(self, leg: "_Leg", remaining_here_m: float, speed_kmh: float, dwell_left_here: float) -> Optional[int]:
+        """Seconds until the trip ends: the rest of this leg, the legs after it, and every pause still to come."""
+        if leg.start_m is None or self._total_m is None:
+            return None
+        rest = remaining_here_m + max(self._total_m - (leg.start_m + leg.length_m), 0.0)
+        return round(rest / max(speed_kmh / 3.6, 0.1) + dwell_left_here + leg.dwell_after_s)
 
     async def return_to_origin(self, router: Any = None) -> dict:
         """Go back to where the last journey started, using the same path type and pace."""
@@ -1121,7 +1197,10 @@ class DeviceManager:
 
     async def stop_walk(self) -> dict:
         """Stop moving but stay at the current simulated position."""
+        was_moving = self._journey_active()
         await self._stop_journey()
+        if was_moving:
+            self._note("Trip stopped", kind="trip")
         return self._sim_state()
 
     async def _journey_loop(self, plan: "JourneyPlan", first_dwell: float, legs: "list[_Leg]", cycle: "list[_Leg]") -> None:
@@ -1132,8 +1211,12 @@ class DeviceManager:
             for leg in itertools.chain(legs, itertools.cycle(cycle) if cycle else ()):
                 await self._follow(leg, plan)
                 if leg.dwell_s:
-                    await self._dwell(leg.dwell_s)
-            self._walk.update(state="done", remaining_m=0.0, wait_left_s=0.0, returning=False)
+                    await self._dwell(leg.dwell_s, None, leg)
+            last = legs[-1] if legs else None
+            self._walk.update(state="done", remaining_m=0.0, wait_left_s=0.0, returning=False, eta_s=0, progress=1.0 if self._total_m else None,
+                              done_m=self._total_m or 0.0)
+            self._position_label, self._position_since = (last.label if last else None), time.time()
+            self._note("Trip finished%s" % (": arrived at %s" % last.label if last and last.label else ""), kind="trip")
             self._realism_override = {}
             self._remember_sim(force=True)
             if self._position and self.on_finish:
@@ -1144,12 +1227,14 @@ class DeviceManager:
         except Exception as e:
             log.exception("journey aborted")
             self._walk["error"] = translate_exception(e).to_dict()
+            self._note("Trip stopped by an error: %s" % self._walk["error"]["message"], level="error", kind="trip")
 
     async def _follow(self, leg: "_Leg", plan: "JourneyPlan") -> None:
         follower = PathFollower(leg.points)
         factor = 1 + random.uniform(-plan.speed_jitter, plan.speed_jitter) if plan.speed_jitter else 1.0
         pace = WalkModel(self._rng)
-        self._walk.update(state="moving", stop=leg.index + 1, wait_left_s=0.0, returning=leg.returning, reason=None)
+        self._walk.update(state="moving", stop=leg.index + 1, wait_left_s=0.0, returning=leg.returning, reason=None,
+                          dest=leg.label, cur_mode=leg.mode)
         while True:
             self._check_stop()
             speed = leg.speed_kmh or self._walk["speed_kmh"]      # a leg's own speed beats the live slider
@@ -1161,23 +1246,31 @@ class DeviceManager:
             await self._push(lat, lon)
             self._walk["cur_speed_kmh"] = speed * factor * natural
             self._walk["remaining_m"] = follower.remaining_m
+            if leg.start_m is not None and self._total_m:
+                here = leg.start_m + (leg.length_m - follower.remaining_m)
+                self._walk["done_m"] = here
+                self._walk["progress"] = min(here / self._total_m, 1.0)
+                self._walk["eta_s"] = self._eta_s(leg, follower.remaining_m, speed * factor * natural, leg.dwell_s)
             if done:
                 return
             if self._on("traffic_stops") and leg.mode == "drive":
                 for angle in follower.passed_turns:
                     secs = traffic_stop_seconds(angle, self._rng)
                     if secs:
-                        await self._dwell(secs, "traffic")
+                        await self._dwell(secs, "traffic", leg)
                         self._walk.update(state="moving", reason=None)
                         break
             await asyncio.sleep(self.walk_tick)
             self._check_stop()
 
-    async def _dwell(self, seconds: float, reason: Optional[str] = None) -> None:
+    async def _dwell(self, seconds: float, reason: Optional[str] = None, leg: Optional["_Leg"] = None) -> None:
         self._walk.update(state="waiting", wait_left_s=seconds, remaining_m=0.0, reason=reason)
         end = time.monotonic() + seconds
         while (left := end - time.monotonic()) > 0:
             self._walk["wait_left_s"] = left
+            if leg is not None and leg.start_m is not None:
+                spare = (leg.dwell_s - seconds) if reason == "traffic" else 0.0     # the planned pause at this stop is still to come
+                self._walk["eta_s"] = self._eta_s(leg, 0.0, max(self._walk.get("cur_speed_kmh") or 5.0, 0.5), left + max(spare, 0.0) if reason == "traffic" else left)
             await asyncio.sleep(min(self.walk_tick, left))
             self._check_stop()
         self._walk["wait_left_s"] = 0.0
@@ -1190,6 +1283,7 @@ class Stop:
     dwell_s: float = 0.0
     mode: Optional[str] = None         # path type for the leg that ARRIVES at this stop (None = plan default)
     speed_kmh: Optional[float] = None  # pace for that leg (None = the live speed setting)
+    label: Optional[str] = None        # what to call this place (an address, "House 3", ...) in the progress bar
 
 
 @dataclass
@@ -1204,6 +1298,7 @@ class JourneyPlan:
     return_to_start: bool = False  # walk back to the starting point when finished
     path: Optional[list] = None   # an exact polyline (GPX track) to follow instead of routing between stops
     realism: Optional[dict] = None  # per-trip overrides of the realism switches, e.g. {"noise": True, "natural_walk": True}
+    title: Optional[str] = None   # a name for the whole trip (a GPX track or saved route), shown in the progress bar
 
 
 @dataclass
@@ -1214,3 +1309,7 @@ class _Leg:
     mode: str = "walk"
     speed_kmh: Optional[float] = None
     returning: bool = False
+    length_m: float = 0.0
+    start_m: Optional[float] = None      # metres of the whole trip before this leg (None = a repeating loop leg)
+    dwell_after_s: float = 0.0           # total pause time in the legs after this one
+    label: Optional[str] = None          # what this leg is heading to

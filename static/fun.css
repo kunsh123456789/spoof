@@ -1,0 +1,46 @@
+/* Fun mode: the effects canvas, the little Mac and the party filter. Everything here is hidden when Fun mode is off. */
+#fx { position: fixed; inset: 0; z-index: 50; pointer-events: none; width: 100vw; height: 100vh; }
+:root[data-fun="off"] #fx, :root[data-fun="off"] #mascot, :root[data-fun="off"] #candy { display: none !important; }
+@media (prefers-reduced-motion: reduce) { #mascot * { animation: none !important; } }
+
+/* lift the map scale above the progress dock */
+.leaflet-bottom { bottom: 84px; }
+@media (max-width: 760px) { .leaflet-bottom { bottom: calc(var(--nav-h) + 8px); } }
+
+/* ---- party mode (Konami code) ---- */
+:root.party #map, :root.party #topbar { animation: partyhue 2.4s linear infinite; }
+@keyframes partyhue { to { filter: hue-rotate(360deg); } }
+
+/* ---- the mascot ---- */
+#mascot { position: fixed; z-index: 14; right: 16px; bottom: 132px; width: 58px; height: 62px; cursor: pointer; user-select: none; -webkit-user-select: none; transition: transform .3s; }
+#mascot:hover { transform: translateY(-3px) rotate(-3deg); }
+@media (max-width: 760px) { #mascot { display: none; } }   /* no room next to the bottom sheet on a phone */
+#mascot .mac { position: absolute; inset: 14px 0 0 0; display: flex; flex-direction: column; align-items: center; }
+#mascot .screen { position: relative; width: 52px; height: 38px; border-radius: 9px; background: var(--panel); border: 3px solid var(--text); box-shadow: 0 3px 10px rgba(0,0,0,.25); }
+#mascot .eye { position: absolute; top: 12px; width: 6px; height: 9px; border-radius: 50%; background: var(--text); animation: blink 5s infinite; transform-origin: center; }
+#mascot .eye.l { left: 12px; } #mascot .eye.r { right: 12px; }
+#mascot .mouth { position: absolute; left: 50%; bottom: 6px; width: 12px; height: 6px; margin-left: -6px; border-bottom: 2.5px solid var(--text); border-radius: 0 0 12px 12px; }
+#mascot .stand { width: 10px; height: 6px; background: var(--text); }
+#mascot .base { width: 28px; height: 4px; border-radius: 3px; background: var(--text); }
+#mascot .hat { position: absolute; left: 50%; top: -3px; font-size: 24px; line-height: 1; transform: translateX(-50%) rotate(-8deg); pointer-events: none; z-index: 2; }
+#mascot .cup, #mascot .zzz { position: absolute; display: none; pointer-events: none; }
+#mascot .cup { right: -12px; bottom: 0; font-size: 20px; transform-origin: bottom left; }
+#mascot .zzz { right: -4px; top: 8px; font-weight: 800; font-size: 15px; color: var(--accent); animation: zfloat 2.6s ease-in-out infinite; }
+#mascot[data-state="coffee"] .cup { display: block; animation: sip 2.4s ease-in-out infinite; }
+#mascot[data-state="coffee"] .mouth { width: 8px; height: 8px; margin-left: -4px; border: 2.5px solid var(--text); border-radius: 50%; bottom: 5px; }
+#mascot[data-state="sleep"] .zzz { display: block; }
+#mascot[data-state="sleep"] .eye { height: 2.5px; width: 10px; top: 16px; border-radius: 2px; animation: none; }
+#mascot[data-state="sleep"] .eye.l { left: 9px; } #mascot[data-state="sleep"] .eye.r { right: 9px; }
+#mascot[data-state="sleep"] .mac { animation: breathe-mac 3.5s ease-in-out infinite; }
+#mascot[data-state="walk"] .mac { animation: bob .5s ease-in-out infinite; }
+#mascot[data-state="dance"] .mac { animation: dance .5s ease-in-out infinite; }
+#mascot[data-state="wave"] .mac { animation: dance .35s ease-in-out 4; }
+#mascot .bubble { position: absolute; right: 8px; bottom: 100%; margin-bottom: 4px; max-width: 220px; width: max-content; padding: 7px 11px; border-radius: 12px 12px 2px 12px; background: var(--text); color: var(--bg);
+  font-size: 12.5px; font-weight: 600; line-height: 1.3; box-shadow: var(--shadow); animation: pop .25s ease-out; }
+@keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }
+@keyframes sip { 0%, 55%, 100% { transform: rotate(0); } 70%, 85% { transform: rotate(-28deg) translateY(-6px); } }
+@keyframes zfloat { 0% { opacity: 0; transform: translate(0, 6px) scale(.7); } 40% { opacity: 1; } 100% { opacity: 0; transform: translate(8px, -16px) scale(1.2); } }
+@keyframes breathe-mac { 50% { transform: scale(1.03, .98); } }
+@keyframes bob { 50% { transform: translateY(-3px); } }
+@keyframes dance { 25% { transform: rotate(-9deg) translateY(-4px); } 75% { transform: rotate(9deg) translateY(-4px); } }
+@keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.9); } }
