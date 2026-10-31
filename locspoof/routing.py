@@ -111,6 +111,33 @@ class Router:
             self._cache.popitem(last=False)
         return legs
 
+    async def nearest(self, lat: float, lon: float, mode: str = "walk") -> Optional[tuple[float, float, float]]:
+        """The closest spot on a real road/path: (lat, lon, metres moved). None if the service cannot say (offline, busy)."""
+        if mode not in ENDPOINTS:
+            mode = "walk"
+        key = ("nearest", mode, round(lat, 5), round(lon, 5))
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]                      # type: ignore[return-value]
+        server, profile = ENDPOINTS[mode][0]
+        async with self._lock:
+            wait = self._last + self._min_interval - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                resp = await self._get(f"{BASE}/{server}/nearest/v1/{profile}/{lon:.6f},{lat:.6f}", {"number": "1"})
+            finally:
+                self._last = time.monotonic()
+        try:
+            wp = resp.json()["waypoints"][0]               # type: ignore[union-attr]
+            res = (float(wp["location"][1]), float(wp["location"][0]), float(wp.get("distance", 0.0)))
+        except (AttributeError, ValueError, KeyError, IndexError, TypeError):
+            return None
+        self._cache[key] = res                           # type: ignore[assignment]
+        while len(self._cache) > 200:
+            self._cache.popitem(last=False)
+        return res
+
     async def _get_retry(self, url: str, params: dict) -> Optional[httpx.Response]:
         """GET, trying again after a pause when the service errors (5xx) or does not answer at all."""
         resp = None

@@ -544,3 +544,76 @@ def test_per_trip_realism_overrides_apply_only_to_that_trip(env):
     n = len(c.backend.sessions[0].calls)
     time.sleep(0.3)
     assert len(c.backend.sessions[0].calls) == n                           # and standing still afterwards is not noisy
+
+
+# ---- "N seconds/minutes after the last move" ------------------------------------------------------------------
+
+def after(secs, type_="clear", **params):
+    return {"after_s": secs, "type": type_, "params": params}
+
+
+def test_a_wait_step_is_validated_and_keeps_its_place_in_the_list():
+    p = clean_plan(plan(step("20:30"), after(90), step("20:00")))
+    assert [s.get("after_s") for s in p["steps"]] == [None, 90, None]          # a plan with waits keeps the order you gave
+    assert p["steps"][1]["at"] == ""
+    assert [s["at"][11:16] for s in clean_plan(plan(step("20:30"), step("20:00")))["steps"]] == ["20:00", "20:30"]   # clock-only plans still sort
+    for bad in (0, -5, 100000, "abc"):
+        with pytest.raises(AppError):
+            clean_plan(plan(after(bad)))
+
+
+def test_a_wait_runs_n_seconds_after_the_phone_stops_moving(tmp_path):
+    moving = {"on": True}
+    h = Harness(tmp_path, is_moving=lambda p: moving["on"])
+    p = h.add(step("20:00", "clear"), after(120, "stop"))
+
+    async def go():
+        h.clock.set("20:00:00"); await h.tick()                                 # step 1 runs (and "starts a trip")
+        h.clock.set("20:10:00"); await h.tick()                                 # still moving: nothing yet
+        assert len(h.calls) == 1
+        moving["on"] = False
+        h.clock.set("20:11:00"); await h.tick()                                 # the phone stops: the 2-minute countdown starts
+        h.clock.set("20:12:30"); await h.tick()
+        assert len(h.calls) == 1                                                # 90 s: too early
+        moving["on"] = True
+        h.clock.set("20:12:40"); await h.tick()                                 # it moved again: the countdown starts over
+        moving["on"] = False
+        h.clock.set("20:13:00"); await h.tick()
+        h.clock.set("20:14:30"); await h.tick()
+        assert len(h.calls) == 1
+        h.clock.set("20:15:01"); await h.tick()                                 # 2 minutes of stillness
+        await h.tick()
+
+    run(go())
+    assert [c[1] for c in h.calls] == ["clear", "stop"]
+    assert [s["status"] for s in h.store.get(p["id"])["steps"]] == ["done", "done"]
+
+
+def test_a_wait_does_not_start_until_the_step_before_has_finished(tmp_path):
+    h = Harness(tmp_path, is_moving=lambda p: False)
+    p = h.add(step("20:00", "clear"), after(30, "stop"))
+
+    async def go():
+        h.clock.set("19:59:59"); await h.tick(); h.clock.set("19:59:58"); await h.tick()
+        assert h.calls == []
+        h.clock.set("20:00:00"); await h.tick(); await h.tick()
+        h.clock.set("20:00:20"); await h.tick()
+        assert len(h.calls) == 1
+        h.clock.set("20:00:31"); await h.tick()
+
+    run(go())
+    assert [c[1] for c in h.calls] == ["clear", "stop"]
+
+
+def test_a_first_step_that_is_a_wait_counts_from_activation_and_shows_as_next(tmp_path):
+    h = Harness(tmp_path, "20:00:00", is_moving=lambda p: False)
+    p = h.add(after(60, "clear"))
+
+    async def go():
+        await h.tick()
+        n = h.sched.next_event()
+        assert n and n["in_s"] == 60 and h.sched.wants_awake()
+        h.clock.set("20:01:00"); await h.tick(); await h.tick()
+
+    run(go())
+    assert len(h.calls) == 1

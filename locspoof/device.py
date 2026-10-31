@@ -25,7 +25,8 @@ from typing import Any, Awaitable, Callable, Optional, Protocol
 from . import errors
 from .errors import AppError
 from .movement import PathFollower, haversine_m, validate_coords
-from .realism import NoiseModel, WalkModel, cooldown_minutes, traffic_stop_seconds
+from . import signals as signals_mod
+from .realism import NoiseModel, WalkModel, cooldown_minutes, traffic_stop, traffic_stop_seconds
 
 log = logging.getLogger("locspoof.device")
 
@@ -593,10 +594,11 @@ class DeviceManager:
         self, backend: Backend, walk_tick: float = WALK_TICK_S,
         on_finish: Optional[Callable[[float, float], None]] = None,
         settings: Optional[dict] = None, ambient_tick: float = AMBIENT_TICK_S, rng: Optional[random.Random] = None,
-        memory: Any = None, activity: Any = None,
+        memory: Any = None, activity: Any = None, signal_source: Any = None,
     ):
         self.backend = backend
         self.activity = activity                                         # ActivityLog (optional)
+        self.signal_source = signal_source                               # async (bbox) -> real stop signs / lights, or None
         self.walk_tick = walk_tick
         self.ambient_tick = ambient_tick
         self.on_finish = on_finish  # called with the final position when a journey completes
@@ -1101,6 +1103,7 @@ class DeviceManager:
                     leg.returning = True
                 legs += back
 
+        await self._attach_signals(legs, plan)
         self._annotate_legs(legs, stops, plan, cycle)
         if plan.jump_to_first:
             # Only teleport once every route is known to work, so a routing failure never strands the phone.
@@ -1122,6 +1125,27 @@ class DeviceManager:
         self._note(self._describe_trip(plan, legs, cycle), kind="trip")
         self._walk_task = asyncio.create_task(self._journey_loop(plan, first_dwell, legs, cycle))
         return self._sim_state()
+
+    async def _attach_signals(self, legs: "list[_Leg]", plan: "JourneyPlan") -> None:
+        """With traffic stops on, look up the real stop signs and lights along the driving legs (best effort)."""
+        want = (plan.realism or {}).get("traffic_stops", self.settings.get("traffic_stops"))
+        drive = [l for l in legs if l.mode == "drive"]
+        if not (want and drive and self.signal_source):
+            return
+        box = signals_mod.bbox_of([p for l in drive for p in l.points])
+        if box is None:
+            return
+        try:
+            found = await asyncio.wait_for(self.signal_source(box), 20)
+        except Exception as e:
+            log.info("no real stop-sign data (%r): using random stops", e)
+            return
+        if found is None:
+            return
+        for l in drive:
+            l.signals = signals_mod.along(l.points, found)
+        n = sum(len(l.signals) for l in drive)
+        self._note("Found %d real stop sign / traffic light spot%s on the route" % (n, "" if n == 1 else "s"), kind="trip")
 
     @staticmethod
     def _annotate_legs(legs: "list[_Leg]", stops: "list[Stop]", plan: "JourneyPlan", cycle: "list[_Leg]") -> None:
@@ -1253,11 +1277,28 @@ class DeviceManager:
                 self._walk["eta_s"] = self._eta_s(leg, follower.remaining_m, speed * factor * natural, leg.dwell_s)
             if done:
                 return
-            if self._on("traffic_stops") and leg.mode == "drive":
+            if self._on("traffic_stops") and leg.mode == "drive" and leg.signals is not None:
+                cfg, reach = self.settings, speed / 3.6 * factor * self.walk_tick + 6.0
+                for sg in leg.signals:
+                    if sg["done"] or haversine_m(*follower.pos, sg["lat"], sg["lon"]) > reach:
+                        continue
+                    sg["done"] = True
+                    if sg["kind"] == "stop_sign":
+                        secs, kind = float(cfg.get("stop_sign_s", 3.0)), "stop_sign"
+                    elif self._rng.random() < 0.6:                 # a red light (the rest are green)
+                        lo = float(cfg.get("junction_min_s", 10.0))
+                        secs, kind = round(self._rng.uniform(lo, max(lo, float(cfg.get("junction_max_s", 35.0)))), 1), "traffic"
+                    else:
+                        continue
+                    await self._dwell(secs, kind, leg)
+                    self._walk.update(state="moving", reason=None)
+                    break
+            elif self._on("traffic_stops") and leg.mode == "drive":
+                cfg = self.settings
                 for angle in follower.passed_turns:
-                    secs = traffic_stop_seconds(angle, self._rng)
+                    secs, kind = traffic_stop(angle, self._rng, cfg.get("stop_sign_s", 3.0), cfg.get("junction_min_s", 10.0), cfg.get("junction_max_s", 35.0))
                     if secs:
-                        await self._dwell(secs, "traffic", leg)
+                        await self._dwell(secs, "stop_sign" if kind == "stop_sign" else "traffic", leg)
                         self._walk.update(state="moving", reason=None)
                         break
             await asyncio.sleep(self.walk_tick)
@@ -1269,8 +1310,8 @@ class DeviceManager:
         while (left := end - time.monotonic()) > 0:
             self._walk["wait_left_s"] = left
             if leg is not None and leg.start_m is not None:
-                spare = (leg.dwell_s - seconds) if reason == "traffic" else 0.0     # the planned pause at this stop is still to come
-                self._walk["eta_s"] = self._eta_s(leg, 0.0, max(self._walk.get("cur_speed_kmh") or 5.0, 0.5), left + max(spare, 0.0) if reason == "traffic" else left)
+                spare = (leg.dwell_s - seconds) if reason in ("traffic", "stop_sign") else 0.0     # the planned pause at this stop is still to come
+                self._walk["eta_s"] = self._eta_s(leg, 0.0, max(self._walk.get("cur_speed_kmh") or 5.0, 0.5), left + max(spare, 0.0) if reason in ("traffic", "stop_sign") else left)
             await asyncio.sleep(min(self.walk_tick, left))
             self._check_stop()
         self._walk["wait_left_s"] = 0.0
@@ -1313,3 +1354,4 @@ class _Leg:
     start_m: Optional[float] = None      # metres of the whole trip before this leg (None = a repeating loop leg)
     dwell_after_s: float = 0.0           # total pause time in the legs after this one
     label: Optional[str] = None          # what this leg is heading to
+    signals: Optional[list] = None       # real stop signs / lights on this leg (None = unknown: use random stops)

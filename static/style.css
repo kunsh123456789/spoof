@@ -351,3 +351,40 @@ kbd { font: 600 11.5px ui-monospace, Menlo, monospace; padding: 2px 6px; border-
   .pop { left: 8px; right: 8px; width: auto; }
   .keys { grid-template-columns: 1fr; }
 }
+
+
+/* ---- panic, number fields, trick-or-treat arrows, the offline capture box ---- */
+.chip.panic { background: #d92d20; border-color: #b42318; color: #fff; font-weight: 800; }
+.chip.panic:hover { background: #b42318; }
+.chip.panic:active { transform: scale(.96); }
+.numrow { margin: 8px 0 4px; display: grid; gap: 8px; }
+.numrow label { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13.5px; }
+.numrow .num { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.numrow input[type="number"] { width: 66px; padding: 6px 8px; text-align: center; }
+.numrow small { display: block; }
+
+/* the phone on the map: always above houses and pins */
+.sim-marker { position: relative; width: 22px; height: 22px; border-radius: 50%; background: var(--ok); border: 3px solid #fff; box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 40%, transparent), 0 2px 8px rgba(0,0,0,.45); }
+.sim-marker::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; border: 2px solid var(--ok); animation: simping 1.8s ease-out infinite; }
+.sim-marker .who { position: absolute; left: 50%; top: -22px; transform: translateX(-50%); font-size: 20px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+@keyframes simping { from { transform: scale(.6); opacity: .9; } to { transform: scale(1.6); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .sim-marker::after { animation: none; } }
+
+.pumpkin { position: relative; }
+.pumpkin b { position: absolute; right: -6px; bottom: -6px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 99px; background: var(--text); color: var(--bg); font-size: 10px; line-height: 15px; font-weight: 800; text-align: center; filter: none; }
+.pumpkin.start { filter: drop-shadow(0 0 5px #fff) drop-shadow(0 0 3px var(--accent)); }
+.arrow { width: 16px; height: 16px; }
+.arrow svg { width: 16px; height: 16px; display: block; filter: drop-shadow(0 0 1.5px rgba(255,255,255,.95)); }
+.housepop button { margin-top: 6px; }
+.housepop { font-size: 13px; }
+
+#captureBox { position: fixed; z-index: 7; pointer-events: none; border: 2px solid #16a34a; border-radius: 6px; background: rgba(34,197,94,.16); box-shadow: 0 0 0 9999px rgba(0,0,0,.05); }
+#captureBox.bad { border-color: #d97706; background: rgba(217,119,6,.16); }
+#captureBox span { position: absolute; left: 8px; top: 6px; padding: 2px 8px; border-radius: 99px; background: #16a34a; color: #fff; font-size: 12px; font-weight: 700; }
+#captureBox.bad span { background: #d97706; }
+
+@media (max-width: 1420px) { #panicBtn .hide-sm { display: none; } #panicBtn { padding: 5px 9px; } #tabs button { padding-left: 9px; padding-right: 9px; } }
+
+.steprow .stephead .whensel { flex: none; max-width: 150px; }
+.steprow .stephead .num { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; flex-wrap: wrap; }
+.steprow .stephead .num input { width: 64px; flex: none; padding: 6px 6px; text-align: center; }

@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .device import Backend, DeviceManager, JourneyPlan, PmdBackend, Stop
+from .device import Backend, DeviceManager, JourneyPlan, PmdBackend, Stop, norm_udid
 from .fleet import Fleet
 from .memory import DeviceMemory
 from .activity import ActivityLog
@@ -24,12 +24,15 @@ from .gpx import MAX_BYTES as GPX_MAX_BYTES, parse_gpx
 from .geocode import Geocoder
 import httpx
 
-from .movement import point_in_polygon, polygon_area_m2, polygon_centroid, validate_coords
+from .movement import haversine_m, point_in_polygon, polygon_area_m2, polygon_centroid, validate_coords
 from .offline import PNG_SIGNATURE, OfflineDownloader, OfflineStore, fetch_tile, is_png
 from .recents import RecentsStore
 from .routes import RoutesStore
 from .routing import Router
 from .schedule import SchedulesStore, Scheduler, clean_plan
+from . import signals as signals_mod
+from .california import CA_BOX
+from .panic import PanicStore
 from .settings import SettingsStore
 from .trickortreat import HouseFinder
 
@@ -124,6 +127,17 @@ class ArmRequest(BaseModel):
     armed: bool
 
 
+class PanicRequest(BaseModel):
+    lat: float
+    lon: float
+    name: str = ""
+
+
+class PreviewRequest(BaseModel):
+    points: list[list[float]]
+    mode: str = "walk"
+
+
 class TrickOrTreatRequest(BaseModel):
     lat: Optional[float] = None
     lon: Optional[float] = None
@@ -153,6 +167,7 @@ def create_app(
     sleep_watch: Optional[SleepWatch] = None,
     awake_interval: float = 2.5,
     activity_path: Optional[Path] = None,
+    panic_path: Optional[Path] = None,
     ambient_tick: float = 2.5,
     rng=None,
     tile_client: Optional[httpx.AsyncClient] = None,
@@ -166,13 +181,19 @@ def create_app(
     routes = RoutesStore(routes_path or ROOT / "routes.json")
     schedules = SchedulesStore(schedules_path or ROOT / "schedules.json")
     activity = ActivityLog(activity_path or ROOT / "activity.json")
+    panic = PanicStore(panic_path or ROOT / "panic.json")
     awake = keep_awake if keep_awake is not None else KeepAwake()
     watch = sleep_watch if sleep_watch is not None else SleepWatch()
     memory = DeviceMemory(devices_path or ROOT / "devices.json")
 
+    async def signal_source(bbox):
+        """Real stop signs / traffic lights in a box, from OpenStreetMap (None = not available: random stops are used)."""
+        query = getattr(houses, "query_json", None)
+        return signals_mod.parse(await query(signals_mod.build_query(bbox))) if query else None
+
     def make_manager(be: Backend) -> DeviceManager:
         return DeviceManager(
-            be, walk_tick=walk_tick, settings=settings.data, ambient_tick=ambient_tick, rng=rng, memory=memory, activity=activity,
+            be, walk_tick=walk_tick, settings=settings.data, ambient_tick=ambient_tick, rng=rng, memory=memory, activity=activity, signal_source=signal_source,
             on_finish=lambda lat, lon: recents.add(lat, lon, "Route end"),
         )
 
@@ -348,7 +369,8 @@ def create_app(
             if not 100 <= body.radius_m <= 1500:
                 raise AppError("bad_radius", "Radius must be between 100 and 1500 m.", status=422)
             lat, lon = body.lat, body.lon
-        plan = await houses.plan(lat, lon, body.radius_m, body.houses, polygon=polygon, **opts)
+        lo, hi = settings.data["tot_dwell_min_s"], settings.data["tot_dwell_max_s"]
+        plan = await houses.plan(lat, lon, body.radius_m, body.houses, polygon=polygon, dwell_range=(lo, max(lo, hi)), **opts)
         kids = opts["kids"]
         return {
             "houses": plan, "source": getattr(houses, "last_source", "online"), "notes": getattr(houses, "last_notes", []),
@@ -405,7 +427,18 @@ def create_app(
         activity.add("⏰ %s · %s: %s%s" % (plan["name"], step["title"] or step["type"].replace("_", " "), verb, (" — " + note) if note else ""),
                      kind="schedule", level="error" if status == "error" else "warn" if status in ("missed", "skipped") else "info")
 
-    scheduler = Scheduler(schedules, execute_step, clock=schedule_clock, tick_every=schedule_tick, retry_every=schedule_retry, on_event=on_step_event)
+    def plan_phone_moving(plan: dict) -> bool:
+        """Is the phone this plan is about still on a trip? (for steps that wait N minutes after the last move)"""
+        ms = fleet.all_managers()
+        want = (plan.get("device") or "").lower()
+        for m in ms:
+            if not want or (m._info and norm_udid(m._info.udid) == norm_udid(want)):
+                if m._journey_active():
+                    return True
+        return False
+
+    scheduler = Scheduler(schedules, execute_step, clock=schedule_clock, tick_every=schedule_tick, retry_every=schedule_retry, on_event=on_step_event,
+                          is_moving=plan_phone_moving)
     app.state.scheduler = scheduler
     app.state.awake = awake
 
@@ -542,6 +575,68 @@ def create_app(
         await manager.set_wifi(body["enabled"])
         return await manager.status(force=True)
 
+    # ---- panic button: jump to one chosen safe spot ----
+    @app.get("/api/panic")
+    async def get_panic():
+        return {"location": panic.get()}
+
+    @app.put("/api/panic")
+    async def put_panic(body: PanicRequest):
+        item = panic.set(body.lat, body.lon, body.name)
+        activity.add("🚨 Panic location set to %s" % (item["name"] or "%.5f, %.5f" % (item["lat"], item["lon"])), kind="location")
+        return {"location": item}
+
+    @app.delete("/api/panic")
+    async def delete_panic():
+        panic.clear()
+        return {"location": None}
+
+    @app.post("/api/panic/go")
+    async def panic_go(manager: DeviceManager = Depends(get_manager)):
+        spot = panic.get()
+        if spot is None:
+            raise AppError("no_panic", "No panic location chosen yet.", "Pick one in the Saved tab (“Panic location”) first.", 409)
+        name = spot["name"] or "the panic location"
+        activity.add("🚨 PANIC: stopped everything and moved to %s" % name, kind="location", level="warn")
+        result = await manager.set_location(spot["lat"], spot["lon"], name)     # also stops any trip
+        recents.add(spot["lat"], spot["lon"], name)
+        return result
+
+    SNAP_MAX_M = 150.0                    # farther than this the spot is probably a park / field: leave the pin where it is
+
+    @app.get("/api/snap")
+    async def snap(lat: float, lon: float, mode: str = "walk"):
+        """Move a spot to the nearest road or path (best effort: if the service can't say, the spot stays)."""
+        validate_coords(lat, lon)
+        none = {"lat": lat, "lon": lon, "moved_m": 0.0, "snapped": False}
+        if not settings.data["snap_pin"]:
+            return none
+        finder = getattr(road_router, "nearest", None)
+        try:
+            hit = await asyncio.wait_for(finder(lat, lon, mode), 12) if finder else None
+        except Exception:
+            hit = None
+        if hit is None or hit[2] > SNAP_MAX_M:
+            return none
+        moved = haversine_m(lat, lon, hit[0], hit[1])
+        return {"lat": hit[0], "lon": hit[1], "moved_m": round(moved, 1), "snapped": moved >= 1.0}
+
+    # ---- preview of the road a trip will take (drawn with arrows) ----
+    @app.post("/api/route-preview")
+    async def route_preview(body: PreviewRequest):
+        pts = [tuple(p) for p in body.points if len(p) == 2]
+        if not 2 <= len(pts) <= 61 or len(pts) != len(body.points):
+            raise AppError("bad_stops", "A preview needs 2 to 61 points.", status=422)
+        if body.mode not in ("straight", "walk", "drive"):
+            raise AppError("bad_mode", "Mode must be straight, walk or drive.", status=422)
+        for la, lo in pts:
+            validate_coords(la, lo)
+        if body.mode == "straight":
+            legs = [[list(a), list(b)] for a, b in zip(pts, pts[1:])]
+        else:
+            legs = [[list(p) for p in leg] for leg in await road_router.route(pts, body.mode)]
+        return {"route": [p for leg in legs for p in leg], "legs": legs}
+
     @app.get("/api/settings")
     async def get_settings():
         return settings.data
@@ -604,7 +699,7 @@ def create_app(
 
     @app.get("/api/search")
     async def search(q: str):
-        return {"results": await geo.search(q)}
+        return {"results": await geo.search(q, box=CA_BOX if settings.data["california_only"] else None)}
 
     @app.get("/api/favorites")
     async def list_favorites():

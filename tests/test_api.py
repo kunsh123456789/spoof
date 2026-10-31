@@ -185,6 +185,7 @@ EXPECTED_ROUTES = {
     ("GET", "/api/status"), ("POST", "/api/trust"), ("POST", "/api/location"), ("DELETE", "/api/location"),
     ("POST", "/api/journey"), ("POST", "/api/journey/return"), ("GET", "/api/journey/route"), ("PATCH", "/api/journey"),
     ("DELETE", "/api/journey"), ("POST", "/api/trick-or-treat/plan"),
+    ("GET", "/api/panic"), ("PUT", "/api/panic"), ("DELETE", "/api/panic"), ("POST", "/api/panic/go"), ("POST", "/api/route-preview"),
     ("GET", "/api/offline"), ("POST", "/api/offline/estimate"), ("POST", "/api/offline"), ("DELETE", "/api/offline/{pack_id}"),
     ("GET", "/tiles/{z}/{x}/{y}.png"),
     ("GET", "/api/devices"), ("POST", "/api/devices/scan"), ("POST", "/api/wifi"),

@@ -132,6 +132,7 @@ class HouseFinder:
     async def plan(
         self, lat: float, lon: float, radius_m: int, count: int, rng: Optional[random.Random] = None,
         polygon: Optional[Polygon] = None, *, realistic: bool = False, kids: bool = False, avoid_busy: bool = False,
+        dwell_range: tuple[float, float] = (20.0, 70.0),
     ) -> list[dict]:
         self.last_notes = []
         try:
@@ -147,7 +148,7 @@ class HouseFinder:
             points = [p for p in points if point_in_polygon(p[0], p[1], polygon)]
         busy = await self._busy_roads(lat, lon, radius_m, polygon) if avoid_busy else None
         info: dict = {}
-        plan = build_plan(points, (lat, lon), count, rng, realistic=realistic, kids=kids, busy=busy or None, info=info)
+        plan = build_plan(points, (lat, lon), count, rng, dwell_range, realistic=realistic, kids=kids, busy=busy or None, info=info)
         if avoid_busy and busy is None:
             self.last_notes.append("Could not load road data, so busy roads were not avoided.")
         elif avoid_busy and not busy:

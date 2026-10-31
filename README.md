@@ -117,7 +117,8 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
 * Seasonal themes switch themselves on: orange for Halloween in October, snowy in December, hearts in February (turn off in Settings). Trick-or-treat always turns the app orange.
 * **Fun mode** (on by default, one switch to turn it off): confetti when a trip ends, a 🍬 candy counter in the top bar while trick-or-treating, a tiny Mac that sleeps when your Mac slept, sips coffee while the Mac is kept awake and wears a seasonal hat, falling leaves, snow or hearts, and a few surprises nobody will tell you about. 🤫
 
-* **📍 Place**: click the map or search to drop a pin (drag it to fine-tune), then **Set location**.
+* **📍 Place**: click the map or search to drop a pin (drag it to fine-tune), then **Set location**. A pin you drop or drag **snaps to the nearest road or
+  path that makes sense** (within 150 m; a note tells you how far it moved; turn off with **Snap pins to roads** in Settings). Searched places keep their exact spot.
 * **🚶 Move**: pick **Straight line**, **Walking** or **Driving** (the last two follow real roads from OpenStreetMap and are
   drawn on the map) and set the speed (changeable while moving). Then choose a destination type:
   * **One**: go to the pin.
@@ -132,8 +133,13 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
 * **Realism switches** (Move tab, all off by default, saved between runs, apply live):
   * **GPS noise**: a few metres of smooth drift on every position, also while standing still.
   * **Natural walking**: the pace wanders a little and eases off before sharp corners.
-  * **Traffic stops**: driving routes pause for a few seconds at some junctions (more likely at sharp turns), like traffic lights.
-    These are simulated from the route's shape, not from real traffic-light data.
+  * **Traffic stops**: a drive waits at **stop signs** (a fixed wait, **3 s** by default) and **traffic lights / junctions** (a random wait,
+    **10-35 s** by default; about 4 in 10 lights are green). Both times are adjustable right under the switch. When the internet is available the app
+    looks up the **real stop signs and traffic lights along your route** in OpenStreetMap (the activity log says how many it found), so the
+    stops happen where a real driver would stop. If that lookup fails (no internet, or a very long route over about 35 km) it falls back to
+    simulated stops based on the shape of the route. Walking does not use this.
+* **🌴 California only** (Settings, on by default): the map cannot be moved outside California and place search only returns places inside it, which
+  keeps things fast and the stop-sign/light data dense. Turn it off in Settings to use the whole world.
   * **Jump cooldown timer**: after a location jump of 1 km or more, shows roughly how long a real trip would have taken.
   Not possible with this method: compass **heading** and **altitude** (the location service only accepts latitude/longitude).
 * **🎃 Trick or treat**: while this tab is open (and while a trick-or-treat walk is running) the app turns orange and shows a
@@ -141,9 +147,12 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
   1. **Draw area**: click points on the map around the neighborhood you want and click the first point again (or press
      **Finish**) to close the shape. **Undo point** removes the last point, **Esc** cancels. The area can be at most 4 km². If you
      skip drawing, houses are searched 350 m around the pin instead.
-  2. **Find houses**: 🎃 pumpkins appear for real houses from OpenStreetMap inside your area, ordered into a house-to-house tour.
+  2. **Find houses**: numbered 🎃 pumpkins appear for real houses from OpenStreetMap inside your area, ordered into a house-to-house
+     tour, and **arrows along the streets** show the path the tour will take. Click a pumpkin and choose **▶ Start the tour here** to begin at a
+     different house (the tour is re-planned from there).
   3. **Start**: the phone jumps to the first house, walks street to street at about 4.5 km/h with natural speed variation, and
-     pauses 20-120 s at every door. **Stop moving** ends it, leaving the phone where it is.
+     pauses at every door for a **random time you choose** (**Time at each house**, default 20-70 s; some houses get a longer chat, kids stay 1.6x
+     longer). Your own position is a pulsing green dot with a little walker above everything else on the map. **Stop moving** ends it, leaving the phone where it is.
   Options (switches on the tab, saved between runs): **Group of kids** (3.2 km/h and 1.6x longer pauses), **Avoid busy roads**
   (houses within 20 m of a motorway/trunk/primary/secondary road are skipped and the tour never crosses one, so it ends early
   instead; needs road data from OpenStreetMap or a saved offline area, otherwise you get a note), and **Realistic houses** (about
@@ -152,7 +161,8 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
 * **⏰ Schedule** (timed plans): build a plan of steps that run **by themselves at real clock times**, for example *8:00 PM start trick-or-treat
   (kids, realistic houses) → 8:30 PM a shaky 5 km/h walk home to an address → 9:00 PM restore real GPS*.
   1. **＋ New plan**: name, date, which phone, and **Run late steps up to N minutes** (default 10).
-  2. **＋ Add step** for each thing: a **time** and an **action**: 🎃 trick or treat (an address, your pin or your drawn area, number of
+  2. **＋ Add step** for each thing: **when** (a clock **time**, or **N seconds / minutes after the last move**: it waits until the step before has finished and the
+     phone has stopped moving, then counts N; if the phone moves again the countdown restarts) and an **action**: 🎃 trick or treat (an address, your pin or your drawn area, number of
      houses, kids / avoid busy roads / realistic), 🚶 walk or drive to an address (path type, speed, **shaky** = GPS noise + uneven pace for
      this walk only, optional start place), 🧭 a saved route, 📍 set a location, ⏹ stop moving, or ↩ restore real GPS. Times after midnight roll
      over to the next day.
@@ -164,10 +174,13 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
   the newest runs (the older ones are *skipped*). A step that fails for a temporary reason (phone not connected yet, no internet) is retried every
   15 s until its late limit ends. Activating a plan marks steps that are already in the past as missed. Steps that need the internet (finding houses
   or addresses) need it at that moment, unless an offline area covers the place. The app cannot wake a sleeping Mac; see the next section.
+* **🚨 Panic button** (top bar, or `Shift+P`): stops any trip and puts the phone at your **Panic location** immediately. Choose that spot in the
+  Saved tab (**Use the current pin**, or press 🚨 next to a favorite). If none is chosen, the button takes you there to pick one.
 * **★ Saved**: **Saved routes** (▶ runs one, ✎ loads it into the editor, ✕ deletes it), **Favorites** take a name plus a place name, coordinates like `48.8584, 2.2945`, or nothing (saves the
   current pin). Click one to move the pin there, **＋** adds it as a stop. **Recent** keeps your last 15 locations (each Set
   location and finished route); **★** promotes one to a favorite.
-* **⬇️ Offline**: while you have internet, zoom the map so a neighborhood fills the screen (up to about 2.4 × 2.4 km), name it
+* **⬇️ Offline**: while you have internet, zoom the map so a neighborhood fills the **light-green box** (up to about 2.4 × 2.4 km; the box is
+  exactly what gets saved, and turns orange if it is too big), name it
   and press **Download what I see**. The app saves, into the `offline/` folder next to `app.py`:
   * the **map tiles** (zoom 12-17),
   * the **houses** (for trick-or-treat "Find houses"), and
@@ -300,7 +313,8 @@ locspoof/trickortreat.py house lookup (Overpass) and tour planning
 locspoof/recents.py    recent locations store
 locspoof/offline.py    offline packs: tiles + houses + streets, local A* router, downloader
 locspoof/realism.py    GPS noise, natural pace, traffic stops, jump cooldown
-locspoof/settings.py   the on/off switches (settings.json)
+locspoof/settings.py   the on/off switches and adjustable times (settings.json)
+locspoof/panic.py      the panic location
 locspoof/gpx.py        GPX import
 locspoof/routes.py     saved routes
 locspoof/busy.py       busy-road geometry for trick-or-treat

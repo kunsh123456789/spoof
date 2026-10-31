@@ -18,6 +18,8 @@ DEFAULTS: dict[str, bool] = {
     "natural_walk": False,   # varying pace, easing at corners
     "traffic_stops": False,  # random stops at junctions on driving routes
     "cooldown_hint": False,  # show a "wait this long after a big jump" timer
+    "snap_pin": True,        # a dropped pin moves to the nearest road / path that makes sense
+    "california_only": True,  # the map (and search) is limited to California
     # trick or treat
     "tot_realistic": False,  # some houses have their lights off, some long chats at the door
     "tot_kids": False,       # a group of kids: slower, longer pauses
@@ -30,27 +32,57 @@ DEFAULTS: dict[str, bool] = {
 }
 
 
+# Adjustable numbers: key -> (default, lowest, highest)
+NUMBERS: dict[str, tuple[float, float, float]] = {
+    "stop_sign_s": (3.0, 1.0, 30.0),       # wait at a stop sign
+    "junction_min_s": (10.0, 1.0, 300.0),  # wait at a junction / traffic light: random between min and max
+    "junction_max_s": (35.0, 1.0, 300.0),
+    "tot_dwell_min_s": (20.0, 0.0, 600.0), # time at each house while trick-or-treating: random between min and max
+    "tot_dwell_max_s": (70.0, 0.0, 600.0),
+}
+PAIRS = (("junction_min_s", "junction_max_s"), ("tot_dwell_min_s", "tot_dwell_max_s"))
+
+
 class SettingsStore:
     """``data`` is a plain dict shared (by reference) with the device managers so changes apply live."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
-        self.data: dict[str, bool] = dict(DEFAULTS)
+        self.data: dict = {**DEFAULTS, **{k: v[0] for k, v in NUMBERS.items()}}
         try:
             saved = json.loads(self.path.read_text(encoding="utf-8"))
             self.data.update({k: v for k, v in saved.items() if k in DEFAULTS and isinstance(v, bool)})
+            for k, (_, lo, hi) in NUMBERS.items():
+                v = saved.get(k)
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi:
+                    self.data[k] = float(v)
+            for a, b in PAIRS:
+                if self.data[a] > self.data[b]:
+                    self.data[a], self.data[b] = NUMBERS[a][0], NUMBERS[b][0]
         except FileNotFoundError:
             pass
         except (ValueError, AttributeError, OSError):
             log.warning("ignoring unreadable %s", self.path)
 
     def update(self, changes: dict) -> dict:
+        clean: dict = {}
         for k, v in changes.items():
-            if k not in DEFAULTS:
+            if k in NUMBERS:
+                _, lo, hi = NUMBERS[k]
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or not lo <= v <= hi:
+                    raise AppError("bad_setting", f"“{k}” must be a number from {lo:g} to {hi:g}.", status=422)
+                clean[k] = float(v)
+            elif k not in DEFAULTS:
                 raise AppError("bad_setting", f"Unknown setting “{k}”.", status=422)
-            if not isinstance(v, bool):
+            elif not isinstance(v, bool):
                 raise AppError("bad_setting", f"Setting “{k}” must be on or off.", status=422)
-        self.data.update(changes)
+            else:
+                clean[k] = v
+        merged = {**self.data, **clean}
+        for a, b in PAIRS:
+            if merged[a] > merged[b]:
+                raise AppError("bad_setting", "The shortest time can't be longer than the longest.", "Lower the first number or raise the second.", 422)
+        self.data.update(clean)
         try:
             atomic_write(self.path, json.dumps(self.data, indent=2).encode("utf-8"))
         except OSError:

@@ -66,3 +66,15 @@ def traffic_stop_seconds(turn_deg: float, rng: random.Random) -> float:
     """Seconds to wait at a junction on a driving route (0 = keep going). Stops are likelier at sharp turns."""
     p = 0.15 if turn_deg < 35 else 0.35 if turn_deg < 75 else 0.5
     return round(rng.uniform(4, 28), 1) if rng.random() < p else 0.0
+
+
+def traffic_stop(turn_deg: float, rng: random.Random, sign_s: float = 3.0, light_min_s: float = 10.0, light_max_s: float = 35.0) -> tuple[float, str]:
+    """(seconds, kind) for a junction on a driving route; (0, "") = keep going.
+
+    Nearly straight-on crossings are small side streets with a *stop sign*: a short, fixed wait (``sign_s``).
+    Real turns are bigger *junctions* (lights): a longer wait, random between ``light_min_s`` and ``light_max_s``.
+    """
+    if turn_deg < 35:
+        return (round(sign_s, 1), "stop_sign") if rng.random() < 0.2 else (0.0, "")
+    p = 0.35 if turn_deg < 75 else 0.5
+    return (round(rng.uniform(light_min_s, max(light_min_s, light_max_s)), 1), "junction") if rng.random() < p else (0.0, "")

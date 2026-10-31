@@ -18,7 +18,7 @@
     }
   });
 
-  const map = L.map("map", { zoomControl: false }).setView([20, 0], 2);
+  const map = L.map("map", { zoomControl: false, maxBoundsViscosity: 1.0 }).setView([20, 0], 2);
   L.control.zoom({ position: "topright" }).addTo(map);
 
   let pin = null, simMarker = null, status = null, busy = false, toastTimer = null, centeredOnSim = false;
@@ -125,7 +125,7 @@
     crosshairOn = on; $("crosshair").hidden = !on; $("crossBtn")?.classList.toggle("on", on); $("pinHereBtn").hidden = !on;
     if (on) toast("Crosshair on: pan the map, then press “Pin here” (or Enter).", 4000);
   }
-  function pinAtCenter() { const c = map.getCenter(); setPin(c.lat, c.lng); toast(`Pin placed at ${fmt4(c.lat)}, ${fmt4(c.lng)}`); }
+  function pinAtCenter() { const c = map.getCenter(); setPin(c.lat, c.lng); toast(`Pin placed at ${fmt4(c.lat)}, ${fmt4(c.lng)}`); snapPin(); }
   function centreOnPhone() {
     const sim = status?.simulation;
     if (sim?.active) map.flyTo([sim.lat, sim.lon], Math.max(map.getZoom(), 16), { duration: 0.8 });
@@ -150,6 +150,7 @@
   const isMobile = () => window.innerWidth <= 760;
   function setPanelCollapsed(c) {
     document.body.classList.toggle("panel-collapsed", c); $("expandBtn").hidden = !c; store.set("ui.collapsed", c ? "1" : "0");
+    if (typeof scheduleEstimate === "function") setTimeout(() => { scheduleEstimate(); }, 380);
   }
   function setPanelWidth(w) {
     if (isMobile()) { document.documentElement.style.removeProperty("--panel-w"); return; }
@@ -164,6 +165,8 @@
     if (name === "tot") { stopLayer.remove(); areaLayer.addTo(map); } else { stopLayer.addTo(map); areaLayer.remove(); if (drawing) cancelDraw(); }
     store.set("tab", name); applyTheme();
     if (name === "offline") { loadOffline(); scheduleEstimate(); }
+    if (typeof updateCapture === "function") updateCapture(false);
+    if (name === "saved") loadPanic();
     if (name === "schedule") { loadSchedules(); loadRoutes(); }
     if (name === "activity") loadActivity();
     if (name === "place") renderSetup();
@@ -187,19 +190,58 @@
     d.addEventListener("toggle", () => store.set(`how-${d.id}`, d.open ? "open" : "closed"));
   });
 
+  // ---------- California only: the map (and place search) stay inside the state ----------
+  const CA = L.latLngBounds([32.4, -124.6], [42.1, -114.0]);
+  function applyCalifornia() {
+    if (settings.california_only) {
+      map.setMinZoom(5); map.options.maxBoundsViscosity = 1.0; map.setMaxBounds(CA.pad(0.15));
+      if (!CA.contains(map.getCenter())) map.fitBounds(CA);
+    } else { map.setMaxBounds(null); map.setMinZoom(2); }
+  }
   // ---------- settings (the on/off switches) ----------
   const SETTING_NEEDS_REPLAN = new Set(["tot_kids", "tot_avoid_busy", "tot_realistic"]);
-  function applySettings() {
+  function applySettings(force = false) {
     document.querySelectorAll("[data-setting]").forEach((cb) => (cb.checked = !!settings[cb.dataset.setting]));
+    document.querySelectorAll("[data-num]").forEach((inp) => { if ((force || document.activeElement !== inp) && settings[inp.dataset.num] !== undefined) inp.value = settings[inp.dataset.num]; });
   }
+  document.querySelectorAll("[data-num]").forEach((inp) => inp.addEventListener("change", async () => {   // a number the user can adjust (seconds)
+    const key = inp.dataset.num;
+    try {
+      const v = Number(inp.value);
+      if (inp.value.trim() === "" || !Number.isFinite(v)) throw { message: "Type a number of seconds." };
+      settings = await api("PATCH", "/api/settings", { [key]: v });
+      if (key.startsWith("tot_") && houses.length) { clearHouses(); toast("Time changed — press “Find houses” again to apply it."); }
+    } catch (e) { fail(e); }
+    applySettings(true);
+  }));
   document.querySelectorAll("[data-setting]").forEach((cb) => cb.addEventListener("change", async () => {
     const key = cb.dataset.setting;
     try {
       settings = await api("PATCH", "/api/settings", { [key]: cb.checked });
+      if (key === "california_only") { applyCalifornia(); toast(cb.checked ? "The map is now limited to California." : "The whole world is available again."); }
       if (SETTING_NEEDS_REPLAN.has(key) && houses.length) { clearHouses(); toast("Option changed — press “Find houses” again to apply it."); }
     } catch (e) { cb.checked = !cb.checked; fail(e); }
     if (status) nowBar(status);
   }));
+
+  // ---------- panic: jump to one chosen safe spot ----------
+  let panicSpot = null;
+  async function loadPanic() {
+    try { panicSpot = (await api("GET", "/api/panic")).location; } catch { return; }
+    $("panicInfo").textContent = panicSpot ? `🚨 ${panicSpot.name || "Panic spot"} · ${fmt4(panicSpot.lat)}, ${fmt4(panicSpot.lon)}` : "Not chosen yet — drop a pin on a safe place and press “Use the current pin”.";
+    $("panicClearBtn").hidden = !panicSpot; $("panicBtn").classList.toggle("unset", !panicSpot);
+  }
+  async function setPanic(lat, lon, name) {
+    try { panicSpot = (await api("PUT", "/api/panic", { lat, lon, name: name || "" })).location; toast(`🚨 Panic location: ${name || fmt4(lat) + ", " + fmt4(lon)}`); loadPanic(); } catch (e) { fail(e); }
+  }
+  async function panic() {
+    if (!panicSpot) { showTab("saved"); return toast("Choose a panic location first (Saved tab → Panic location).", 6000); }
+    try { await api("POST", "/api/panic/go"); clearRoute(); toast(`🚨 Stopped. Phone moved to ${panicSpot.name || "the panic location"}.`, 6000); refresh(); loadRecent(); }
+    catch (e) { fail(e); }
+  }
+  $("panicBtn").onclick = panic;
+  $("panicPinBtn").onclick = async () => { try { const c = readInputs(); await setPanic(c.lat, c.lon, pinLabel || labelFor(c.lat, c.lon) || ""); } catch (e) { fail(e); } };
+  $("panicClearBtn").onclick = async () => { try { await api("DELETE", "/api/panic"); loadPanic(); toast("Panic location removed."); } catch (e) { fail(e); } };
 
   // ---------- pin ----------
   function pinLine() {
@@ -209,7 +251,7 @@
   function setPin(lat, lon, { pan = false, label = null } = {}) {
     if (!pin) {
       pin = L.marker([lat, lon], { draggable: true }).addTo(map);
-      pin.on("dragend", () => { const p = pin.getLatLng(); pinLabel = null; fillInputs(p.lat, p.lng); schedulePinLookup(); });
+      pin.on("dragend", () => { const p = pin.getLatLng(); pinLabel = null; fillInputs(p.lat, p.lng); schedulePinLookup(); snapPin(); });
     } else pin.setLatLng([lat, lon]);
     pinLabel = label || labelFor(lat, lon);
     fillInputs(lat, lon);
@@ -223,7 +265,20 @@
     if (Math.abs(lat) > 90 || Math.abs(lon) > 180) throw { message: "Latitude must be within ±90 and longitude within ±180." };
     return { lat, lon };
   }
-  map.on("click", (e) => (drawing ? addVertex(e.latlng.wrap()) : setPin(e.latlng.lat, e.latlng.lng)));
+  // A pin dropped by hand moves to the nearest road or path that makes sense (best effort; setting "snap_pin").
+  let snapSeq = 0;
+  async function snapPin() {
+    if (!pin || !settings.snap_pin) return;
+    const seq = ++snapSeq, { lat, lng } = pin.getLatLng();
+    try {
+      const r = await api("GET", `/api/snap?lat=${lat}&lon=${lng}&mode=${mode === "drive" ? "drive" : "walk"}`, undefined, { timeout: 15000 });
+      const now = pin && pin.getLatLng();
+      if (seq !== snapSeq || !r.snapped || !now || Math.abs(now.lat - lat) > 1e-7 || Math.abs(now.lng - lng) > 1e-7) return;   // the user moved on
+      setPin(r.lat, r.lon, { snapped: true });
+      toast(`📍 Moved the pin ${Math.round(r.moved_m)} m to the nearest road or path.`, 3000);
+    } catch { /* offline or busy: the pin stays where it was dropped */ }
+  }
+  map.on("click", (e) => { if (drawing) return addVertex(e.latlng.wrap()); setPin(e.latlng.lat, e.latlng.lng); snapPin(); });
   for (const id of ["lat", "lon"]) $(id).addEventListener("change", () => {
     try { const { lat, lon } = readInputs(); setPin(lat, lon, { pan: true }); } catch (e) { fail(e); }
   });
@@ -465,7 +520,7 @@
   // ---------- trick or treat ----------
   const FALLBACK_RADIUS = 350, MAX_AREA_KM2 = 4;
   $("houses").addEventListener("input", () => ($("housesOut").textContent = $("houses").value));
-  function clearHouses() { houses = []; houseLayer.clearLayers(); $("totInfo").hidden = true; $("totNotes").hidden = true; $("totStartBtn").disabled = true; }
+  function clearHouses() { houses = []; arrowSeq++; houseLayer.clearLayers(); $("totInfo").hidden = true; $("totNotes").hidden = true; $("totStartBtn").disabled = true; }
   function areaKm2(poly) {                                  // same equirectangular shoelace as the server
     const lat0 = poly.reduce((a, p) => a + p[0], 0) / poly.length * Math.PI / 180, k = Math.PI / 180 * 6371008.8;
     const pts = poly.map(([la, lo]) => [lo * Math.cos(lat0) * k, la * k]);
@@ -529,12 +584,22 @@
     try { res = await api("POST", "/api/trick-or-treat/plan", body); }
     catch (e) { $("totInfo").hidden = true; throw e; }
     houses = res.houses; pace = res.pace;
-    houses.forEach((h, i) => L.marker([h.lat, h.lon], {
-      icon: L.divIcon({ className: h.lights_off ? "house-off" : "", html: `<div class="pumpkin">${h.lights_off ? "🌑" : "🎃"}</div>`, iconSize: [22, 22] }),
-      title: h.lights_off ? `House ${i + 1} (lights off — skipped)` : `House ${i + 1}`, interactive: false,
-    }).addTo(houseLayer));
     const visit = houses.filter((h) => !h.lights_off);
-    L.polyline(visit.map((h) => [h.lat, h.lon]), { color: "#ff7a00", weight: 2, dashArray: "3 6", interactive: false }).addTo(houseLayer);
+    houses.forEach((h, i) => {
+      const n = h.lights_off ? "" : visit.indexOf(h) + 1;
+      const m = L.marker([h.lat, h.lon], {
+        icon: L.divIcon({ className: h.lights_off ? "house-off" : "", html: `<div class="pumpkin${n === 1 ? " start" : ""}">${h.lights_off ? "🌑" : "🎃"}${n ? `<b>${n}</b>` : ""}</div>`, iconSize: [24, 24] }),
+        title: h.lights_off ? `House ${i + 1} (lights off — skipped)` : `House ${n}${n === 1 ? " — the tour starts here" : ""}`, zIndexOffset: n === 1 ? 500 : 0,
+      }).addTo(houseLayer);
+      if (!h.lights_off) {
+        const box = document.createElement("div"); box.className = "housepop";
+        box.append(`House ${n}${n === 1 ? " (start)" : ""} · pause about ${Math.round(h.dwell_s)} s`);
+        if (n !== 1) { box.append(document.createElement("br")); const b = document.createElement("button"); b.className = "secondary"; b.textContent = "▶ Start the tour here";
+          b.onclick = () => { map.closePopup(); setPin(h.lat, h.lon, { label: `house ${n}` }); $("findBtn").click(); toast("Re-planning the tour from that house…"); }; box.append(b); }
+        m.bindPopup(box);
+      }
+    });
+    drawTourArrows(visit);
     map.fitBounds(L.latLngBounds(houses.map((h) => [h.lat, h.lon])).pad(0.25), { maxZoom: 18 });
     let dist = 0; for (let i = 1; i < visit.length; i++) dist += haversine([visit[i - 1].lat, visit[i - 1].lon], [visit[i].lat, visit[i].lon]);
     const secs = dist / (pace.speed_kmh / 3.6) * 1.3 + visit.reduce((a, h) => a + h.dwell_s, 0);
@@ -544,6 +609,36 @@
     $("totNotes").hidden = !(res.notes || []).length;
     $("totStartBtn").disabled = false;
   });
+  // The road the tour will take, with an arrow every so often showing which way it goes.
+  let arrowSeq = 0;
+  async function drawTourArrows(visit) {
+    const seq = ++arrowSeq, pts = visit.map((h) => [h.lat, h.lon]);
+    if (pts.length < 2) return;
+    let route, note = "";
+    try { route = (await api("POST", "/api/route-preview", { points: pts, mode: "walk" }, { timeout: 40000 })).route; }
+    catch { route = pts; note = " (couldn't load the roads, so the arrows are straight lines)"; }
+    if (seq !== arrowSeq || !houses.length) return;                       // a newer search replaced this one
+    L.polyline(route, { color: "#ff7a00", weight: 4, opacity: 0.75, interactive: false }).addTo(houseLayer);
+    addArrows(houseLayer, route, "#c2410c");
+    if (note) $("totInfo").textContent += note;
+  }
+  function addArrows(group, pts, color) {
+    const P = (p) => L.CRS.EPSG3857.project(L.latLng(p[0], p[1]));
+    let total = 0; for (let i = 1; i < pts.length; i++) total += haversine(pts[i - 1], pts[i]);
+    const gap = Math.max(35, total / 150); let next = gap / 2, run = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const seg = haversine(pts[i - 1], pts[i]); if (seg < 0.5) continue;
+      while (next <= run + seg) {
+        const t = (next - run) / seg, a = pts[i - 1], b = pts[i];
+        const at = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], pa = P(a), pb = P(b);
+        const deg = Math.atan2(pb.x - pa.x, pb.y - pa.y) * 180 / Math.PI;                 // clockwise from north
+        L.marker(at, { interactive: false, keyboard: false, icon: L.divIcon({ className: "arrow", iconSize: [16, 16], iconAnchor: [8, 8],
+          html: `<svg viewBox="0 0 16 16" style="transform:rotate(${deg.toFixed(1)}deg)"><path d="M8 1 L14 14 L8 10.5 L2 14 Z" fill="${color}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/></svg>` }) }).addTo(group);
+        next += gap;
+      }
+      run += seg;
+    }
+  }
   $("totStartBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
     const visit = houses.filter((h) => !h.lights_off);
     if (!visit.length) throw { message: "Find houses first.", hint: "Press “2 · Find houses”." };
@@ -557,16 +652,42 @@
   const packLayer = L.layerGroup().addTo(map);
   let offTimer = null, offPoll = null, offBusy = false;
   const mb = (b) => (b / 1048576).toFixed(1);
-  function viewBBox() { const b = map.getBounds(); return { south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() }; }
+  // What "Download" will save: the part of the map you can really see (not the bit hidden under the side card, top bar or progress bar).
+  function captureRect() {
+    const m = 20, top = $("topbar").getBoundingClientRect().bottom + m, dock = $("dock").getBoundingClientRect(), panel = $("panel").getBoundingClientRect();
+    const hidden = document.body.classList.contains("panel-collapsed");
+    let left = m, bottom = innerHeight - m, t = top;
+    if (isMobile()) { t = Math.max(top, dock.bottom + m); if (!hidden) bottom = panel.top - m; }
+    else { bottom = dock.top - m; if (!hidden) left = panel.right + m; }
+    const right = innerWidth - m - 56;                                                 // leave room for the map buttons
+    return { left, top: t, right, bottom };
+  }
+  function viewBBox() {
+    const r = captureRect();
+    if (r.right - r.left < 80 || r.bottom - r.top < 80) { const b = map.getBounds(); return { south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() }; }
+    const nw = map.containerPointToLatLng([r.left, r.top]), se = map.containerPointToLatLng([r.right, r.bottom]);
+    return { south: se.lat, west: nw.lng, north: nw.lat, east: se.lng };
+  }
+  function updateCapture(bad = false) {
+    const box = $("captureBox"), r = captureRect(), show = tab === "offline" && r.right - r.left >= 80 && r.bottom - r.top >= 80;
+    box.hidden = !show; if (!show) return;
+    Object.assign(box.style, { left: r.left + "px", top: r.top + "px", width: r.right - r.left + "px", height: r.bottom - r.top + "px" });
+    box.classList.toggle("bad", bad === true);
+  }
+  map.on("move zoom resize", () => updateCapture(captureBad)); window.addEventListener("resize", () => updateCapture(captureBad));
+  if (window.ResizeObserver) new ResizeObserver(() => updateCapture(captureBad)).observe($("panel"));
+  let captureBad = false;
   function scheduleEstimate() { clearTimeout(offTimer); offTimer = setTimeout(updateEstimate, 400); }
   async function updateEstimate() {
     if (tab !== "offline" || offPoll) return;
     try {
       const e = await api("POST", "/api/offline/estimate", { name: "x", bbox: viewBBox() });
-      $("offEstimate").textContent = `📐 ${e.area_km2} km² on screen · ${e.tiles} map tiles · about ${e.est_mb} MB`; $("offBtn").disabled = false;
-    } catch (e) { $("offEstimate").textContent = `⚠️ ${e.message} ${e.hint || ""}`; $("offBtn").disabled = true; }
+      $("offEstimate").textContent = `📐 ${e.area_km2} km² inside the green box · ${e.tiles} map tiles · about ${e.est_mb} MB`; $("offBtn").disabled = false; captureBad = false;
+    } catch (e) { $("offEstimate").textContent = `⚠️ ${e.message} ${e.hint || ""}`; $("offBtn").disabled = true; captureBad = true; }
+    updateCapture(captureBad);
   }
   map.on("moveend", () => { if (tab === "offline") scheduleEstimate(); });
+  document.addEventListener("locspoof:ui", () => updateCapture(captureBad));
   async function loadOffline() {
     try {
       const { packs, job } = await api("GET", "/api/offline");
@@ -637,6 +758,7 @@
       const el = li(f.name); el.title = `${fmt(f.lat)}, ${fmt(f.lon)}`;
       el.onclick = () => { setPin(f.lat, f.lon, { pan: true, label: f.name }); toast("Pin moved. Go to the Place tab and press Set location."); };
       el.append(miniBtn("＋", "Add as a stop", () => addStop(f.lat, f.lon, f.name)));
+      if (!star) el.append(miniBtn("🚨", `Make “${f.name}” the panic location`, () => setPanic(f.lat, f.lon, f.name)));
       if (star) el.append(miniBtn("★", "Save to favorites", () => saveFavorite(f.name, { lat: f.lat, lon: f.lon })));
       else el.append(miniBtn("✕", `Delete ${f.name}`, async () => { try { await api("DELETE", `/api/favorites/${f.id}`); loadFavs(); } catch (x) { fail(x); } }));
       return el;
@@ -725,10 +847,11 @@
         loadSchedules();
       });
       card.append(head, sw);
-      const meta = document.createElement("p"); meta.className = "muted"; meta.textContent = `${dateText(p.steps[0].at)} · runs late steps up to ${p.grace_min} min${p.device ? " · specific phone" : ""}`; card.append(meta);
+      const meta = document.createElement("p"); meta.className = "muted"; meta.textContent = `${p.steps.find((s) => s.at) ? dateText(p.steps.find((s) => s.at).at) : "After you activate it"} · runs late steps up to ${p.grace_min} min${p.device ? " · specific phone" : ""}`; card.append(meta);
       p.steps.forEach((s) => {
         const line = document.createElement("div"); line.className = "stepline";
-        const when = document.createElement("span"); when.className = "when"; when.textContent = clockText(s.at);
+        const when = document.createElement("span"); when.className = "when"; when.textContent = s.after_s != null ? `⏱ +${afterText(s.after_s)}` : clockText(s.at);
+        if (s.after_s != null) when.title = `${afterText(s.after_s)} after the last move finished`;
         const what = document.createElement("span"); what.textContent = s.title || describeStep(s);
         if (s.note) { const n = document.createElement("span"); n.className = "note"; n.textContent = s.note; what.append(n); }
         const right = document.createElement("span"); right.style.display = "flex"; right.style.gap = "4px"; right.style.alignItems = "center";
@@ -746,15 +869,17 @@
   // -- the plan editor
   const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const addMinutes = (hhmm, m) => { const [h, mi] = hhmm.split(":").map(Number); const t = (h * 60 + mi + m) % 1440; return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`; };
-  function newStep(time, type = "trick_or_treat") { return { id: undefined, time, type, params: defaultParams(type) }; }
+  function newStep(time, type = "trick_or_treat") { return { id: undefined, time, type, params: defaultParams(type), when: "at", afterVal: 5, afterUnit: 60 }; }
+  const afterText = (s) => (s % 3600 === 0 ? `${s / 3600} h` : s % 60 === 0 ? `${s / 60} min` : `${s} s`);
   function defaultParams(type) {
     return ({ move_to: { mode: "walk", speed_kmh: 5, shaky: false }, trick_or_treat: { houses: 20, radius_m: 350, kids: false, avoid_busy: false, realistic: false }, route: { jump: true } })[type] || {};
   }
   function openEditor(plan) {
-    const first = plan ? new Date(plan.steps[0].at) : new Date();
+    const first = plan && plan.steps.find((s) => s.at) ? new Date(plan.steps.find((s) => s.at).at) : new Date();
     editor = {
       id: plan?.id || null, name: plan?.name || "", date: localDate(first), device: plan?.device || "", grace: plan?.grace_min ?? 10,
-      steps: plan ? plan.steps.map((s) => ({ id: s.id, time: s.at.slice(11, 16), type: s.type, params: JSON.parse(JSON.stringify(s.params)) })) : [newStep(addMinutes(new Date().toTimeString().slice(0, 5), 60))],
+      steps: plan ? plan.steps.map((s) => ({ id: s.id, time: s.at ? s.at.slice(11, 16) : "", type: s.type, params: JSON.parse(JSON.stringify(s.params)),
+        when: s.after_s != null ? "after" : "at", afterUnit: s.after_s != null && s.after_s % 60 === 0 ? 60 : 1, afterVal: s.after_s != null ? (s.after_s % 60 === 0 ? s.after_s / 60 : s.after_s) : 5 })) : [newStep(addMinutes(new Date().toTimeString().slice(0, 5), 60))],
     };
     $("planEditor").hidden = false; $("newPlanBtn").hidden = true; $("editorTitle").textContent = plan ? `Edit “${plan.name}”` : "New plan";
     $("planName").value = editor.name; $("planDate").value = editor.date; $("planGrace").value = editor.grace;
@@ -828,12 +953,21 @@
     $("planSteps").replaceChildren(...editor.steps.map((st, i) => {
       const row = document.createElement("div"); row.className = "steprow";
       const head = document.createElement("div"); head.className = "stephead";
-      const t = document.createElement("input"); t.type = "time"; t.value = st.time; t.oninput = () => (st.time = t.value);
+      const t = document.createElement("input"); t.type = "time"; t.value = st.time; t.oninput = () => (st.time = t.value); t.hidden = st.when === "after";
+      const wsel = document.createElement("select"); wsel.className = "whensel"; wsel.setAttribute("aria-label", "When this step runs");
+      [["at", "At a time"], ["after", "After the last move"]].forEach(([v, tx]) => { const o = document.createElement("option"); o.value = v; o.textContent = tx; wsel.append(o); });
+      wsel.value = st.when; wsel.onchange = () => { st.when = wsel.value; if (st.when === "at" && !st.time) st.time = addMinutes(editor.steps[i - 1]?.time || "20:00", 30); renderEditorSteps(); };
+      const aft = document.createElement("span"); aft.className = "num"; aft.hidden = st.when !== "after";
+      const av = document.createElement("input"); av.type = "number"; av.min = "1"; av.max = "86400"; av.step = "1"; av.value = st.afterVal; av.setAttribute("aria-label", "How long to wait"); av.oninput = () => (st.afterVal = Number(av.value));
+      const au = document.createElement("select"); au.setAttribute("aria-label", "Seconds or minutes");
+      [[1, "secs"], [60, "mins"]].forEach(([v, tx]) => { const o = document.createElement("option"); o.value = v; o.textContent = tx; au.append(o); });
+      au.value = st.afterUnit; au.onchange = () => (st.afterUnit = Number(au.value));
+      aft.append(av, au, " after the last move");
       const sel = document.createElement("select");
       [["trick_or_treat", "🎃 Trick or treat"], ["move_to", "🚶 Walk / drive to…"], ["route", "🧭 Saved route"], ["set_location", "📍 Set location"], ["stop", "⏹ Stop moving"], ["clear", "↩ Restore real GPS"]]
         .forEach(([v, tx]) => { const o = document.createElement("option"); o.value = v; o.textContent = tx; sel.append(o); });
       sel.value = st.type; sel.onchange = () => { st.type = sel.value; st.params = defaultParams(st.type); renderEditorSteps(); };
-      head.append(t, sel, miniBtn("✕", "Remove this step", () => { editor.steps.splice(i, 1); renderEditorSteps(); }));
+      head.append(wsel, t, aft, sel, miniBtn("✕", "Remove this step", () => { editor.steps.splice(i, 1); renderEditorSteps(); }));
       row.append(head, renderParams(st)); return row;
     }));
   }
@@ -846,14 +980,18 @@
     if (!editor.date) throw { message: "Choose the date." };
     let day = new Date(`${editor.date}T00:00`), prev = "";
     const steps = editor.steps.map((st, i) => {
-      if (!st.time) throw { message: `Step ${i + 1} needs a time.` };
-      if (prev && st.time < prev) day.setDate(day.getDate() + 1);          // after midnight: the next day
-      prev = st.time;
+      const rel = st.when === "after", waitS = Math.round(Number(st.afterVal) * (st.afterUnit || 1));
+      if (rel) { if (!Number.isFinite(waitS) || waitS < 1 || waitS > 86400) throw { message: `Step ${i + 1}: type how long to wait (1 second to 24 hours).` }; }
+      else {
+        if (!st.time) throw { message: `Step ${i + 1} needs a time.` };
+        if (prev && st.time < prev) day.setDate(day.getDate() + 1);          // after midnight: the next day
+        prev = st.time;
+      }
       const p = { ...st.params };
       if (st.type === "move_to" || st.type === "set_location") { if (p.lat === undefined) throw { message: `Step ${i + 1}: choose a place.`, hint: "Type an address and press Find." }; }
       if (st.type === "trick_or_treat" && !p.polygon && p.lat === undefined) throw { message: `Step ${i + 1}: choose where to trick-or-treat.`, hint: "Find an address, use the pin, or use your drawn area." };
       if (st.type === "route" && !p.route_id) throw { message: `Step ${i + 1}: choose a saved route.` };
-      return { id: st.id, at: `${localDate(day)}T${st.time}`, type: st.type, params: p };
+      return rel ? { id: st.id, after_s: waitS, type: st.type, params: p } : { id: st.id, at: `${localDate(day)}T${st.time}`, type: st.type, params: p };
     });
     const body = { name: editor.name, device: editor.device, grace_min: editor.grace, steps };
     if (editor.id) await api("PUT", `/api/schedules/${editor.id}`, body); else await api("POST", "/api/schedules", body);
@@ -924,7 +1062,8 @@
     else if (w.error) { state = "error"; icon = "⚠️"; title = "The trip stopped"; detail = w.error.message + (w.error.hint ? ` ${w.error.hint}` : ""); }
     else if (w.active && w.state === "waiting") {
       state = "waiting"; pct = w.progress; eta = w.eta_s; step = w.total > 1 ? `${tot ? "house" : "stop"} ${w.stop}/${w.total}` : "";
-      if (w.reason === "traffic") { icon = "🚦"; title = "Stopped at a junction"; }
+      if (w.reason === "stop_sign") { icon = "🛑"; title = "Stopped at a stop sign"; }
+      else if (w.reason === "traffic") { icon = "🚦"; title = "Stopped at a junction"; }
       else if (tot) { icon = "🎃"; title = `At the door of ${w.dest || "a house"}`; }
       else { icon = "⏸"; title = `Paused at ${w.dest || "a stop"}`; }
       detail = `Moving on in ${fmtSecs(w.wait_left_s)}${w.progress != null ? ` · ${fmtDist(w.done_m || 0)} of ${fmtDist(w.total_m)} done` : ""}`;
@@ -957,6 +1096,9 @@
     if (awakeInfo?.active) $("awakeChip").title = `The Mac is being kept awake: ${awakeInfo.reasons.join(", ")}`;
     document.dispatchEvent(new CustomEvent("locspoof:status", { detail: { status: s, state, awake: awakeInfo } }));
   }
+  const simIcon = (who) => L.divIcon({ className: "", html: `<div class="sim-marker"><span class="who">${who}</span></div>`, iconSize: [22, 22], iconAnchor: [11, 11] });
+  let lastMapTouch = 0;
+  map.on("dragstart zoomstart", () => { lastMapTouch = Date.now(); });             // don't fight the user's own panning
   function render(s) {
     status = s;
     const chip = $("device"), banner = $("banner");
@@ -981,9 +1123,11 @@
     $("noticeHint").textContent = warns.map((w) => w.hint).filter(Boolean).join("  ");
     const sim = s.simulation;
     if (sim.active) {
-      const icon = L.divIcon({ className: "", html: '<div class="sim-marker"></div>', iconSize: [18, 18] });
-      if (!simMarker) simMarker = L.marker([sim.lat, sim.lon], { icon, interactive: false, zIndexOffset: -100 }).addTo(map);
+      const who = s.walk?.active ? (s.walk.cur_mode === "drive" ? "🚗" : s.walk.kind === "trick_or_treat" && settings.tot_kids ? "🧒" : "🚶") : "📍";
+      if (!simMarker) simMarker = L.marker([sim.lat, sim.lon], { icon: simIcon(who), interactive: false, zIndexOffset: 5000, keyboard: false }).addTo(map);
       else simMarker.setLatLng([sim.lat, sim.lon]);
+      if (simMarker._who !== who) { simMarker._who = who; simMarker.setIcon(simIcon(who)); }
+      if (s.walk?.active && !map.getBounds().pad(-0.05).contains([sim.lat, sim.lon]) && Date.now() - lastMapTouch > 8000) map.panTo([sim.lat, sim.lon], { animate: true });
       if (!centeredOnSim) { centeredOnSim = true; if (!pin) map.setView([sim.lat, sim.lon], 13); }
     } else if (simMarker) { simMarker.remove(); simMarker = null; }
     nowBar(s);
@@ -1080,6 +1224,7 @@
   const commands = () => {
     const c = [];
     TABS.forEach(([t, ic, n], i) => c.push({ ic, t: `Go to ${n}`, hint: String(i + 1), run: () => showTab(t) }));
+    c.push({ ic: "🚨", t: "PANIC: go to the panic location", hint: "Shift+P", run: panic });
     c.push({ ic: "⏹", t: "Stop moving", hint: "Space", run: act("stopBtn") }, { ic: "🛰", t: "Restore real GPS", hint: "R", run: act("clearBtn") }, { ic: "↩", t: "Return to start", hint: "B", run: act("returnBtn") });
     c.push({ ic: "🎯", t: "Centre map on the phone", hint: "L", run: centreOnPhone }, { ic: "✛", t: "Toggle crosshair", hint: "C", run: () => setCrosshair(!crosshairOn) },
       { ic: "🗺", t: "Next map style", hint: "M", run: cycleLayer }, { ic: "☰", t: "Hide / show the side card", hint: "\\", run: () => setPanelCollapsed(!document.body.classList.contains("panel-collapsed")) });
@@ -1124,6 +1269,7 @@
     if (e.key === "Escape") { if (anyOpen()) { Object.keys(pops).forEach(closePop); return; } if (drawing) { cancelDraw(); return; } if (crosshairOn) { setCrosshair(false); return; } return; }
     if (e.metaKey || e.ctrlKey || e.altKey || typing(e.target) || anyOpen()) return;
     const k = e.key;
+    if (k === "P") { panic(); return; }
     if (k >= "1" && k <= String(TABS.length)) showTab(TABS[Number(k) - 1][0]);
     else if (k === " ") { if (status?.walk?.active) { e.preventDefault(); $("stopBtn").click(); } }
     else if (k === "r" || k === "R") act("clearBtn")();
@@ -1150,7 +1296,7 @@
 
   (async function init() {
     try { settings = await api("GET", "/api/settings"); } catch { settings = {}; }
-    applySettings();
+    applySettings(); applyCalifornia();
     await loadDevices(); loadAwake();
     (function loop() { refresh().finally(() => setTimeout(loop, status?.walk?.active ? 1000 : 3000)); })();
   })();
@@ -1159,5 +1305,5 @@
   { const w = Number(store.get("ui.panelw")); if (w) setPanelWidth(w); }
   showTab(["place", "move", "tot", "schedule", "saved", "offline", "activity"].includes(store.get("tab")) ? store.get("tab") : "place");
   if (store.get("ui.collapsed") === "1" && !isMobile()) setPanelCollapsed(true);
-  pinLine(); loadFavs(); loadRecent(); loadRoutes(); renderStops(); renderArea(); showGpx();
+  pinLine(); loadPanic(); loadFavs(); loadRecent(); loadRoutes(); renderStops(); renderArea(); showGpx();
 })();

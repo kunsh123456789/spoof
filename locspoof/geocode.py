@@ -40,11 +40,11 @@ class Geocoder:
         self._last_request = 0.0
         self._cache: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
 
-    async def search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+    async def search(self, query: str, limit: int = 5, box: Optional[tuple] = None) -> list[dict[str, Any]]:
         q = " ".join(query.split())
         if len(q) < 2:
             raise AppError("bad_query", "Type at least 2 characters to search.", status=422)
-        key = q.lower()
+        key = q.lower() + ('|box' if box else '')
         if key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key]
@@ -54,7 +54,7 @@ class Geocoder:
             if wait > 0:
                 await asyncio.sleep(wait)
             try:
-                resp = await self._get_retry(q, limit)
+                resp = await self._get_retry(q, limit, box)
             finally:
                 self._last_request = time.monotonic()
 
@@ -88,8 +88,12 @@ class Geocoder:
             await asyncio.sleep(self.retry_delays[i])
         raise AssertionError("unreachable")
 
-    async def _get_retry(self, q: str, limit: int) -> httpx.Response:
-        return await self._request_retry(NOMINATIM_URL, {"q": q, "format": "jsonv2", "limit": str(limit)})
+    async def _get_retry(self, q: str, limit: int, box: Optional[tuple] = None) -> httpx.Response:
+        params = {"q": q, "format": "jsonv2", "limit": str(limit)}
+        if box:                                                    # only look inside this rectangle (south, west, north, east)
+            s, w, n, e = box
+            params.update(viewbox=f"{w},{n},{e},{s}", bounded="1")
+        return await self._request_retry(NOMINATIM_URL, params)
 
     async def reverse(self, lat: float, lon: float) -> dict[str, Any]:
         """The address at a spot: {"label": short text for the progress bar, "name": the full address}."""

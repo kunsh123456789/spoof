@@ -38,6 +38,17 @@ def parse_at(value: Any) -> float:
     return datetime.fromisoformat(value.strip()).timestamp()
 
 
+def step_ts(step: dict) -> Optional[float]:
+    """When a step is due: its clock time, or (for "N seconds after the last move") the moment the phone went still plus N.
+    None = a relative step whose moment has not come yet."""
+    if step.get("after_s") is not None:
+        return None if step.get("idle_since") is None else step["idle_since"] + step["after_s"]
+    return parse_at(step["at"])
+
+
+TERMINAL = ("done", "error", "missed", "skipped")
+
+
 def _num(p: dict, key: str, lo: float, hi: float, default: Optional[float] = None) -> float:
     try:
         v = float(p[key]) if key in p and p[key] not in (None, "") else default
@@ -63,10 +74,15 @@ def clean_step(raw: Any, index: int = 0) -> dict:
     t = raw.get("type")
     if t not in STEP_TYPES:
         raise AppError("bad_step", f"Step {index + 1}: unknown action “{t}”.", status=422)
-    try:
-        at = datetime.fromisoformat(str(raw.get("at", "")).strip()).strftime("%Y-%m-%dT%H:%M:%S")
-    except ValueError as e:
-        raise AppError("bad_step", f"Step {index + 1} needs a date and time.", status=422) from e
+    after_s = None
+    if raw.get("after_s") not in (None, ""):                      # "N seconds/minutes after the last move" instead of a clock time
+        after_s = int(_num(raw, "after_s", 1, 86400))
+        at = ""
+    else:
+        try:
+            at = datetime.fromisoformat(str(raw.get("at", "")).strip()).strftime("%Y-%m-%dT%H:%M:%S")
+        except ValueError as e:
+            raise AppError("bad_step", f"Step {index + 1} needs a date and time (or a wait after the last move).", status=422) from e
     p = raw.get("params") if isinstance(raw.get("params"), dict) else {}
     out: dict = {}
     if t == "set_location":
@@ -114,8 +130,11 @@ def clean_step(raw: Any, index: int = 0) -> dict:
         out["label"] = str(p.get("label") or "")[:80]
         for k in ("kids", "avoid_busy", "realistic"):
             out[k] = bool(p.get(k))
-    return {"id": str(raw.get("id") or uuid.uuid4().hex[:8])[:16], "at": at, "type": t, "title": str(raw.get("title") or "")[:100],
+    step = {"id": str(raw.get("id") or uuid.uuid4().hex[:8])[:16], "at": at, "type": t, "title": str(raw.get("title") or "")[:100],
             "params": out, "status": "pending", "note": ""}
+    if after_s is not None:
+        step["after_s"] = after_s
+    return step
 
 
 def clean_plan(raw: Any) -> dict:
@@ -141,7 +160,8 @@ def clean_plan(raw: Any) -> dict:
             while s["id"] in seen:
                 s["id"] = uuid.uuid4().hex[:8]
             seen.add(s["id"])
-    steps.sort(key=lambda s: parse_at(s["at"]))
+    if not any("after_s" in s for s in steps):                   # clock times: keep them in time order; waits keep the order you gave
+        steps.sort(key=lambda s: parse_at(s["at"]))
     return {"name": name, "device": str(raw.get("device") or "")[:100], "grace_min": grace, "steps": steps}
 
 
@@ -190,9 +210,10 @@ class SchedulesStore(FavoritesStore):
         def go(p: dict) -> None:
             p["armed"] = armed
             if armed:
+                p["armed_at"] = now
                 grace = p.get("grace_min", DEFAULT_GRACE_MIN) * 60
                 for s in p["steps"]:
-                    if s["status"] == "pending" and now - parse_at(s["at"]) > grace:
+                    if s["status"] == "pending" and s.get("after_s") is None and now - parse_at(s["at"]) > grace:
                         s["status"], s["note"] = "missed", "Already in the past when the plan was activated."
                         skipped["n"] += 1
 
@@ -208,6 +229,7 @@ class SchedulesStore(FavoritesStore):
             for s in p["steps"]:
                 s["status"], s["note"] = "pending", ""
                 s.pop("ran_at", None)
+                s.pop("idle_since", None)
 
         return self._mutate(plan_id, go)
 
@@ -238,8 +260,10 @@ class Scheduler:
     """Watches the clock and runs the steps of activated plans at their time."""
 
     def __init__(self, store: SchedulesStore, execute: Callable[[dict, dict], Awaitable[str]], clock: Callable[[], float] = time.time,
-                 tick_every: float = 1.0, retry_every: float = 15.0, on_event: Optional[Callable[[dict, dict, str, str], None]] = None):
+                 tick_every: float = 1.0, retry_every: float = 15.0, on_event: Optional[Callable[[dict, dict, str, str], None]] = None,
+                 is_moving: Optional[Callable[[dict], bool]] = None):
         self.store, self.execute, self.clock = store, execute, clock
+        self.is_moving = is_moving or (lambda plan: False)   # is this plan's phone still on a trip? ("N min after the last move")
         self.on_event = on_event          # called as (plan, step, status, note) whenever a step changes state
         self.tick_every, self.retry_every = tick_every, retry_every
         self._loop_task: Optional[asyncio.Task] = None
@@ -276,25 +300,44 @@ class Scheduler:
                 log.exception("scheduler tick failed")          # one bad tick must never end the scheduler
             await asyncio.sleep(self.tick_every)
 
+    def _track_waits(self, plan: dict, now: float) -> dict:
+        """Start (or restart) the countdown of "N min after the last move" steps: it runs while the step before has finished
+        and the phone is standing still, and starts over if the phone moves again."""
+        steps = plan["steps"]
+        for i, s in enumerate(steps):
+            if s["status"] != "pending" or s.get("after_s") is None:
+                continue
+            prev_ok = i == 0 or steps[i - 1]["status"] in TERMINAL
+            if not prev_ok:
+                continue
+            if self.is_moving(plan):
+                if s.get("idle_since") is not None:
+                    self.store.update_step(plan["id"], s["id"], idle_since=None)
+            elif s.get("idle_since") is None:
+                anchor = max(plan.get("armed_at") or now, 0) if i == 0 else now
+                self.store.update_step(plan["id"], s["id"], idle_since=min(anchor, now))
+        return self.store.get(plan["id"]) or plan
+
     async def tick(self) -> None:
         now = self.clock()
         for plan in self.store.list():
             if not plan.get("armed"):
                 continue
+            plan = self._track_waits(plan, now)
             grace = plan.get("grace_min", DEFAULT_GRACE_MIN) * 60
-            due = sorted((s for s in plan["steps"] if s["status"] == "pending" and parse_at(s["at"]) <= now), key=lambda s: parse_at(s["at"]))
+            due = sorted((s for s in plan["steps"] if s["status"] == "pending" and step_ts(s) is not None and step_ts(s) <= now), key=step_ts)
             if not due:
                 continue
             *older, current = due
             for s in older:        # several steps came due together (the Mac slept): only the latest still matters
-                late = now - parse_at(s["at"])
+                late = now - step_ts(s)
                 if late <= grace:
                     self.store.update_step(plan["id"], s["id"], status="skipped", note="Skipped: a later step was already due.")
                     self._emit(plan, s, "skipped", "a later step was already due")
                 else:
                     self.store.update_step(plan["id"], s["id"], status="missed", note=self._late_note(late, grace))
                     self._emit(plan, s, "missed", self._late_note(late, grace))
-            late = now - parse_at(current["at"])
+            late = now - step_ts(current)
             if late > grace:
                 self.store.update_step(plan["id"], current["id"], status="missed", note=self._late_note(late, grace))
                 self._emit(plan, current, "missed", self._late_note(late, grace))
@@ -302,7 +345,7 @@ class Scheduler:
             self.store.update_step(plan["id"], current["id"], status="running", note="Started" + (f" {int(late)} s late." if late > 5 else "."))
             self._emit(plan, current, "running", f"{int(late)} s late" if late > 5 else "")
             key = (plan["id"], current["id"])
-            task = asyncio.create_task(self._run_step(plan, current, parse_at(current["at"]) + grace))
+            task = asyncio.create_task(self._run_step(plan, current, step_ts(current) + grace))
             self._tasks[key] = task
             task.add_done_callback(lambda _t, k=key: self._tasks.pop(k, None))
 
@@ -356,11 +399,11 @@ class Scheduler:
                 continue
             grace = plan.get("grace_min", DEFAULT_GRACE_MIN) * 60
             for s in plan["steps"]:
-                if s["status"] == "pending" and now - parse_at(s["at"]) <= grace:
-                    at = parse_at(s["at"])
+                at = step_ts(s) if s["status"] == "pending" else None
+                if at is not None and now - at <= grace:
                     if best is None or at < best["ts"]:
                         best = {"ts": at, "plan_id": plan["id"], "plan_name": plan["name"], "step_id": s["id"], "type": s["type"],
-                                "title": s["title"], "at": s["at"], "in_s": round(at - now)}
+                                "title": s["title"], "at": datetime.fromtimestamp(at).strftime("%Y-%m-%dT%H:%M:%S"), "in_s": round(at - now)}
         if best:
             best.pop("ts")
         return best
@@ -372,7 +415,16 @@ class Scheduler:
             if not plan.get("armed"):
                 continue
             grace = plan.get("grace_min", DEFAULT_GRACE_MIN) * 60
-            for s in plan["steps"]:
-                if s["status"] == "running" or (s["status"] == "pending" and parse_at(s["at"]) - now <= horizon_s and now - parse_at(s["at"]) <= grace):
+            steps = plan["steps"]
+            for i, s in enumerate(steps):
+                if s["status"] == "running":
+                    return True
+                if s["status"] != "pending":
+                    continue
+                if s.get("after_s") is not None:                  # a wait after the last move: the Mac is needed while that chain is under way
+                    if i == 0 or steps[i - 1]["status"] in TERMINAL or steps[i - 1]["status"] == "running":
+                        return True
+                    continue
+                if parse_at(s["at"]) - now <= horizon_s and now - parse_at(s["at"]) <= grace:
                     return True
         return False

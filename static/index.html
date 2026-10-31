@@ -7,8 +7,8 @@
   <title>iPhone Location Simulator</title>
   <link rel="icon" href="/static/icon.png">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=21">
-  <link rel="stylesheet" href="/static/fun.css?v=21">
+  <link rel="stylesheet" href="/static/style.css?v=24">
+  <link rel="stylesheet" href="/static/fun.css?v=24">
 </head>
 <body>
   <!-- ======================= top bar ======================= -->
@@ -26,6 +26,7 @@
     <div id="topright">
       <span id="candy" class="pill" hidden title="Houses visited while trick-or-treating">🍬 <b id="candyN">0</b></span>
       <button id="nextChip" class="chip hide-md" hidden title="Next scheduled step"><span class="t"></span></button>
+      <button id="panicBtn" class="chip panic" title="PANIC: stop everything and jump to your panic location (Shift+P)">🚨 <span class="hide-sm">Panic</span></button>
       <span id="awakeChip" class="pill hide-sm" hidden title="The Mac is being kept awake">☕</span>
       <button id="device" class="chip" data-state="loading" title="Phones &amp; connection"><span class="dot"></span><span id="deviceText">Checking…</span><span id="phoneCount" class="count" hidden></span></button>
       <button id="paletteBtn" class="iconbtn hide-sm" title="Command palette (Ctrl/⌘ K)"><kbd>⌘K</kbd></button>
@@ -37,6 +38,7 @@
   <div id="map" aria-label="Map"></div>
   <div id="vignette"></div>
   <div id="crosshair" hidden><i></i></div>
+  <div id="captureBox" hidden aria-hidden="true"><span id="captureLabel">Will be saved</span></div>
   <div id="totBanner" hidden>🎃 Trick-or-treat mode</div>
 
   <!-- ======================= side card ======================= -->
@@ -110,8 +112,8 @@
         <ul id="results" class="list" hidden></ul>
         <h2>Pin coordinates</h2>
         <div class="row">
-          <label>Latitude <input id="lat" inputmode="decimal" placeholder="48.858370"></label>
-          <label>Longitude <input id="lon" inputmode="decimal" placeholder="2.294481"></label>
+          <label>Latitude <input id="lat" inputmode="decimal" placeholder="34.052200"></label>
+          <label>Longitude <input id="lon" inputmode="decimal" placeholder="-118.243700"></label>
         </div>
         <button id="setBtn" class="primary full">Set location</button>
       </section>
@@ -201,7 +203,12 @@
         <label class="sw"><input type="checkbox" data-setting="natural_walk"><span class="track"></span>
           <span><b>Natural walking</b><small>Pace varies a little and eases off before sharp corners.</small></span></label>
         <label class="sw"><input type="checkbox" data-setting="traffic_stops"><span class="track"></span>
-          <span><b>Traffic stops</b><small>Driving routes pause now and then at junctions, like lights.</small></span></label>
+          <span><b>Traffic stops</b><small>Driving routes pause now and then: a short wait at stop signs, a longer one at junctions (lights).</small></span></label>
+        <div class="numrow" id="trafficTimes">
+          <label>🛑 Stop sign wait <span class="num"><input type="number" data-num="stop_sign_s" min="1" max="30" step="1" aria-label="Stop sign wait in seconds"> s</span></label>
+          <label>🚦 Junction wait <span class="num"><input type="number" data-num="junction_min_s" min="1" max="300" step="1" aria-label="Shortest junction wait in seconds"> to <input type="number" data-num="junction_max_s" min="1" max="300" step="1" aria-label="Longest junction wait in seconds"> s</span></label>
+          <small class="muted">Each junction wait is a random time between the two numbers.</small>
+        </div>
         <label class="sw"><input type="checkbox" data-setting="cooldown_hint"><span class="track"></span>
           <span><b>Jump cooldown timer</b><small>After a big jump, shows how long a real trip would take.</small></span></label>
         <p class="muted">Not possible with this method: compass heading and altitude.</p>
@@ -213,8 +220,8 @@
           <summary>How it works</summary>
           <ol>
             <li><b>Draw your area:</b> press <b>Draw area</b>, then click points on the map around the neighborhood you want. Click the <b>first point</b> again (or press <b>Finish</b>) to close the shape. Skip this to use 350 m around the pin instead.</li>
-            <li>Press <b>Find houses</b>. 🎃 pumpkins appear on the map — real houses from OpenStreetMap inside your area, ordered into a house-to-house tour.</li>
-            <li>Press <b>Start</b>. The phone jumps to the first house, then walks street to street at a natural pace and <b>pauses 20–120 s at every door</b>, like a real trick-or-treater.</li>
+            <li>Press <b>Find houses</b>. Numbered 🎃 pumpkins appear — real houses from OpenStreetMap — and <b>arrows show the path</b> the tour will take. <b>Click a pumpkin → “Start here”</b> to begin the tour at a different house.</li>
+            <li>Press <b>Start</b>. The phone jumps to the first house, then walks street to street at a natural pace and <b>pauses at every door</b> for a random time you choose (below), like a real trick-or-treater.</li>
             <li>Watch progress in the bottom bar. <b>Stop moving</b> ends it early — the phone stays where it is.</li>
           </ol>
           <p class="muted">While this tab is open the app turns orange so you know trick-or-treat mode is active.</p>
@@ -240,6 +247,12 @@
         <label class="sw"><input type="checkbox" data-setting="tot_realistic"><span class="track"></span>
           <span><b>🌙 Realistic houses</b><small>Some houses have their lights off (skipped); some turn into a long chat.</small></span></label>
 
+        <h2>Time at each house</h2>
+        <div class="numrow">
+          <label>Random pause at every door <span class="num"><input type="number" data-num="tot_dwell_min_s" min="0" max="600" step="5" aria-label="Shortest time at a house in seconds"> to <input type="number" data-num="tot_dwell_max_s" min="0" max="600" step="5" aria-label="Longest time at a house in seconds"> s</span></label>
+          <small class="muted">Some houses get a longer chat on top. A group of kids stays 1.6× longer.</small>
+        </div>
+
         <h2>Houses</h2>
         <label class="slider">Number of houses: <b><output id="housesOut">20</output></b>
           <input id="houses" type="range" min="5" max="40" step="1" value="20">
@@ -259,6 +272,7 @@
             <li>Press <b>Save plan</b>, then switch <b>Activate</b> on. A plan never runs unless it is activated.</li>
             <li>When the <b>real clock</b> reaches a step's time, the app does it by itself, one step after another.</li>
             <li>The app must be <b>open</b>, the Mac <b>awake</b> and the phone <b>connected</b> at that time. The app keeps the Mac awake for you (see Phones &amp; connection → Keep Mac awake).</li>
+            <li>Instead of a clock time, a step can say <b>After the last move</b>: it waits until the previous step is finished and the phone has stopped moving, then runs after the number of seconds or minutes you type (the countdown starts over if the phone moves again).</li>
             <li>If it was late (the Mac slept), a step still runs up to the plan's <b>late limit</b> (default 10 min); after that it is marked <b>missed</b> instead of surprising you later.</li>
           </ol>
           <p class="muted"><b>Shaky</b> = GPS noise plus a natural, uneven pace for that walk only. <b>⏵ Test</b> runs a single step right now, to check it works.</p>
@@ -291,12 +305,20 @@
         <details class="howto" id="how-saved" open>
           <summary>How it works</summary>
           <ol>
+            <li><b>Panic location:</b> choose a safe spot; the 🚨 button then jumps there instantly.</li>
             <li><b>Favorites:</b> type a name, then a place name, coordinates like <code>48.8584, 2.2945</code>, or leave blank to save the current pin.</li>
             <li>Click any saved place to put the pin there. <b>＋</b> adds it as a stop in the Move tab.</li>
             <li><b>Saved routes</b> are multi-stop routes and GPX tracks you saved in the Move tab. <b>▶</b> runs one, <b>✎</b> loads it into the editor.</li>
             <li><b>Recent</b> remembers your last 15 locations automatically. Press <b>★</b> to promote one to a favorite.</li>
           </ol>
         </details>
+        <h2>🚨 Panic location</h2>
+        <p id="panicInfo" class="infocard"></p>
+        <div class="row">
+          <button id="panicPinBtn" class="secondary">Use the current pin</button>
+          <button id="panicClearBtn" class="secondary" hidden>Remove</button>
+        </div>
+        <p class="muted">The 🚨 button in the top bar (or Shift+P) stops any trip and puts the phone here at once. You can also press 🚨 next to a favorite below.</p>
         <h2>Saved routes</h2>
         <ul id="routes" class="list"></ul>
         <h2>Favorites</h2>
@@ -320,7 +342,7 @@
             <li>While you have internet, <b>zoom the map</b> so the neighborhood you'll use fills the screen.</li>
             <li>Give it a name and press <b>Download what I see</b>. The app saves the <b>map</b>, the <b>houses</b> and the <b>streets</b> for that area on your Mac (a few MB).</li>
             <li>Later with no data, everything works inside that area: the map still shows, <b>Find houses</b> uses the saved houses, and walking/driving paths follow the saved streets.</li>
-            <li>Dashed boxes on the map show which areas are saved.</li>
+            <li>The <b>green box</b> on the map shows exactly what will be saved (the part of the map not hidden behind the side card). Dashed boxes show areas already saved.</li>
           </ol>
           <p class="muted">For trick-or-treat, make sure your whole neighborhood fits on screen (up to about 2.4 × 2.4 km). Map zoom levels 12–17 are saved; zooming in further offline shows blank tiles.</p>
         </details>
@@ -396,6 +418,10 @@
       <button class="segbtn" data-layer="street">🗺 Street</button><button class="segbtn" data-layer="satellite">🛰 Satellite</button><button class="segbtn" data-layer="topo">⛰ Topo</button>
     </div>
     <p class="muted">Street maps can be saved for offline use; satellite and topo need the internet.</p>
+    <label class="sw"><input type="checkbox" data-setting="snap_pin"><span class="track"></span>
+      <span><b>🧲 Snap pins to roads</b><small>A pin you drop or drag moves to the nearest road or path that makes sense (within 150 m).</small></span></label>
+    <label class="sw"><input type="checkbox" data-setting="california_only"><span class="track"></span>
+      <span><b>🌴 Limit the map to California</b><small>The map and place search stay inside the state, and driving uses real stop signs and traffic lights there. Off = the whole world.</small></span></label>
     <h3>Fun</h3>
     <label class="sw"><input type="checkbox" id="funSwitch"><span class="track"></span>
       <span><b>🎉 Fun mode</b><small>The little Mac, confetti, candy counter, falling snow or hearts… and a few secret surprises. Off = a plain, serious app.</small></span></label>
@@ -437,7 +463,7 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/fun.js?v=21"></script>
-  <script src="/static/app.js?v=21"></script>
+  <script src="/static/fun.js?v=24"></script>
+  <script src="/static/app.js?v=24"></script>
 </body>
 </html>
