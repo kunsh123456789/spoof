@@ -558,15 +558,43 @@ def create_app(
         return Response(resp.content, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
 
     # ---- phones ----
+    async def decorated_devices(fresh: bool = False) -> list[dict]:
+        """Connected phones with the user's nickname / favorite star; favorites that are unplugged are listed too."""
+        out = []
+        for d in await fleet.devices(fresh=fresh):
+            meta = memory.meta(d["udid"])
+            out.append({**d, **meta, "display_name": meta["nickname"] or d["name"], "offline": False})
+        seen = {norm_udid(d["udid"]) for d in out}
+        for key, rec in memory.favorites():
+            if key not in seen:
+                meta = memory.meta(key)
+                name = rec.get("name") or "Saved phone"
+                out.append({"udid": key, "name": name, "ios_version": rec.get("ios_version"), "connection": None, "paired": True, **meta,
+                            "display_name": meta["nickname"] or name, "offline": True})
+        out.sort(key=lambda d: (not d["favorite"], d["offline"], d["display_name"].lower()))
+        return out
+
     @app.get("/api/devices")
     async def list_devices(fresh: bool = False):
-        return {"devices": await fleet.devices(fresh=fresh)}
+        return {"devices": await decorated_devices(fresh)}
+
+    @app.patch("/api/devices/{udid}")
+    async def patch_device(udid: str, body: dict):
+        """Rename a phone ({"nickname": "Mum's phone"}, "" = back to its own name) and/or star it ({"favorite": true})."""
+        if "nickname" in body and not isinstance(body["nickname"], str):
+            raise AppError("bad_request", "The name must be text.", status=422)
+        if "favorite" in body and not isinstance(body["favorite"], bool):
+            raise AppError("bad_request", "favorite must be true or false.", status=422)
+        if not 4 <= len(udid) <= 64:
+            raise AppError("bad_request", "That is not a phone id.", status=422)
+        meta = memory.set_meta(udid, body.get("nickname"), body.get("favorite"))
+        return {**meta, "udid": udid}
 
     @app.post("/api/devices/scan")
     async def scan_wifi():
         """Look for paired iPhones on the local network (Bonjour)."""
         await fleet.scan_wifi()
-        return {"devices": await fleet.devices(fresh=True)}
+        return {"devices": await decorated_devices(True)}
 
     @app.post("/api/wifi")
     async def set_wifi(body: dict, manager: DeviceManager = Depends(get_manager)):

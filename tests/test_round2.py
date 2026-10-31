@@ -284,3 +284,45 @@ def test_the_real_router_asks_osrm_for_the_nearest_road():
     assert "/nearest/v1/" in seen[0] and "-118.000000,34.000000" in seen[0]
     broken = Router(client=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500))), min_interval=0)
     assert asyncio.run(broken.nearest(34.0, -118.0)) is None
+
+
+# ---- phone favorites and nicknames ----
+def test_phones_can_be_starred_and_renamed_and_it_sticks(tmp_path):
+    def app_():
+        return create_app(backend=FakeBackend(), router=FakeRouter(), house_finder=FakeHouses(), favorites_path=tmp_path / "f.json",
+                          recents_path=tmp_path / "r.json", offline_root=tmp_path / "o", settings_path=tmp_path / "s.json",
+                          routes_path=tmp_path / "rt.json", devices_path=tmp_path / "d.json", schedules_path=tmp_path / "sch.json",
+                          activity_path=tmp_path / "act.json", panic_path=tmp_path / "p.json")
+
+    with TestClient(app_()) as c:
+        phone = c.get("/api/devices").json()["devices"][0]
+        assert phone["nickname"] == "" and phone["favorite"] is False and phone["display_name"] == phone["name"]
+        udid = phone["udid"]
+        r = c.patch(f"/api/devices/{udid}", json={"nickname": "  Mum's   phone ", "favorite": True})
+        assert r.status_code == 200 and r.json()["nickname"] == "Mum's phone" and r.json()["favorite"] is True
+        phone = c.get("/api/devices").json()["devices"][0]
+        assert phone["display_name"] == "Mum's phone" and phone["name"] != "Mum's phone" and phone["favorite"]
+        assert c.patch(f"/api/devices/{udid}", json={"nickname": 5}).status_code == 422
+        assert c.patch(f"/api/devices/{udid}", json={"favorite": "yes"}).status_code == 422
+        assert c.patch("/api/devices/x", json={"favorite": True}).status_code == 422
+    with TestClient(app_()) as c:                                              # a restart remembers both
+        phone = c.get("/api/devices").json()["devices"][0]
+        assert phone["display_name"] == "Mum's phone" and phone["favorite"]
+        c.patch(f"/api/devices/{phone['udid']}", json={"nickname": "", "favorite": False})
+        phone = c.get("/api/devices").json()["devices"][0]
+        assert phone["display_name"] == phone["name"] and not phone["favorite"]
+
+
+def test_an_unplugged_favorite_phone_is_still_listed_first(tmp_path):
+    from locspoof.memory import DeviceMemory
+    mem = DeviceMemory(tmp_path / "d.json")
+    mem.remember("AAAA-BBBB-CCCC-DDDD", "Old iPhone", "16.1")
+    mem.set_meta("AAAA-BBBB-CCCC-DDDD", "Spare", True)
+    app = create_app(backend=FakeBackend(), router=FakeRouter(), house_finder=FakeHouses(), favorites_path=tmp_path / "f.json",
+                     recents_path=tmp_path / "r.json", offline_root=tmp_path / "o", settings_path=tmp_path / "s.json",
+                     routes_path=tmp_path / "rt.json", devices_path=tmp_path / "d.json", schedules_path=tmp_path / "sch.json",
+                     activity_path=tmp_path / "act.json", panic_path=tmp_path / "p.json")
+    with TestClient(app) as c:
+        devs = c.get("/api/devices").json()["devices"]
+        assert devs[0]["display_name"] == "Spare" and devs[0]["offline"] is True and devs[0]["favorite"]
+        assert devs[1]["offline"] is False

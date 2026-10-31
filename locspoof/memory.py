@@ -57,6 +57,30 @@ class DeviceMemory:
         if rec and rec.pop("sim", None) is not None:
             self._save()
 
+    def meta(self, udid: str) -> dict:
+        """The user's own choices for a phone: a nickname and whether it is a favorite."""
+        rec = self.data.get(_key(udid)) or {}
+        return {"nickname": rec.get("nickname") or "", "favorite": bool(rec.get("favorite"))}
+
+    def set_meta(self, udid: str, nickname=None, favorite=None) -> dict:
+        rec = self.data.setdefault(_key(udid), {})
+        if nickname is not None:
+            nick = " ".join(str(nickname).split())[:40]
+            if nick:
+                rec["nickname"] = nick
+            else:
+                rec.pop("nickname", None)
+        if favorite is not None:
+            if favorite:
+                rec["favorite"] = True
+            else:
+                rec.pop("favorite", None)
+        self._save()
+        return self.meta(udid)
+
+    def favorites(self) -> list[tuple[str, dict]]:
+        return [(k, v) for k, v in self.data.items() if v.get("favorite")]
+
     def _save(self) -> None:
         try:
             atomic_write(self.path, json.dumps(self.data, indent=2).encode("utf-8"))

@@ -56,6 +56,7 @@ This creates `~/Applications/iPhone Location.app` (with its own icon, no Termina
 * The app points at this project folder and its `.venv`, so if you move or rename the folder, run `./make_app.sh` again. After
   `git pull` nothing needs rebuilding. For a different location: `./make_app.sh /Applications`.
 * `python app.py` (browser only, no window toolkit needed) still works.
+* **Updating the app**: the app *is* this folder, so there is nothing to reinstall. Quit it (Cmd+Q; if the window is closed it may still be running, so check the Dock), run `git pull` in the project folder, then open the app again. Re-run `./make_app.sh` only if you moved the folder or want a new icon. If `requirements.txt` changed, also run `source .venv/bin/activate && pip install -r requirements.txt` first. A change you don't see usually means the old copy was still running.
 
 ## One-time iPhone setup
 
@@ -190,7 +191,7 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
   no data at all (a "No internet" note appears at the top). Typical size is 3-6 MB per area. To use trick-or-treat offline,
   download the area first, then draw/pin inside it. Offline routing is a simplified router: a short gap in the street data
   (up to 200 m) becomes a straight hop, anything longer reports an error. Straight line mode never needs any data.
-* **📱 Phones & connection** (click the phone chip at the top): lists every iPhone the app can see with a **🔌 USB** or **📶 Wi-Fi**
+* **📱 Phones & connection** (click the phone chip at the top; **☆** makes a phone a favorite so it sorts first and stays listed when unplugged, **✎** renames it): lists every iPhone the app can see with a **🔌 USB** or **📶 Wi-Fi**
   badge. Click one to control it; each phone keeps its own location and trips, and several can run at once (the others show as grey
   dots on the map). **Auto-reconnect** (on by default): if the cable or Wi-Fi drops, a trip pauses ("📡 Reconnecting…"), and when the
   phone is back the fake location is restored and the trip continues; if it does not come back within 10 minutes the trip stops.

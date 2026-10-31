@@ -306,7 +306,7 @@
   let devicesLoaded = false; const knownNames = {};
   async function loadDevices(fresh = false) {
     try { devices = (await api("GET", `/api/devices${fresh ? "?fresh=true" : ""}`)).devices; } catch { return; }
-    devices.forEach((d) => (knownNames[normUdid(d.udid)] = d.name));
+    devices.forEach((d) => (knownNames[normUdid(d.udid)] = d.display_name || d.name));
     const present = devices.some((d) => normUdid(d.udid) === normUdid(device));
     // Pick a phone on first load (or when none is chosen yet) but never switch away mid-session: an unplugged
     // phone must stay selected so its reconnect state is visible and commands never go to the wrong phone.
@@ -321,17 +321,34 @@
     const gone = missing ? [(() => { const el = li(`✓ ${knownNames[normUdid(device)] || "Selected phone"} · not connected`); el.querySelector(".name").classList.add("phone-sel"); el.title = "Waiting for this phone to come back"; return el; })()] : [];
     $("phoneList").replaceChildren(...gone, ...(n ? devices.map((d) => {
       const sel = normUdid(d.udid) === normUdid(device);
-      const el = li(`${sel ? "✓ " : ""}${d.name}${d.ios_version ? ` · iOS ${d.ios_version}` : ""}${d.paired ? "" : " · not trusted yet"}${d.simulating ? " · ● simulating" : ""}`);
+      const shown = d.display_name || d.name;
+      const el = li(`${sel ? "✓ " : ""}${d.favorite ? "★ " : ""}${shown}${d.nickname ? ` (${d.name})` : ""}${d.ios_version ? ` · iOS ${d.ios_version}` : ""}${d.paired ? "" : " · not trusted yet"}${d.offline ? " · not connected" : ""}${d.simulating ? " · ● simulating" : ""}`);
       if (sel) el.querySelector(".name").classList.add("phone-sel");
-      const badge = document.createElement("span"); badge.className = "badge"; badge.textContent = d.connection === "USB" ? "🔌 USB" : "📶 Wi-Fi";
-      el.append(badge); el.title = "Click to control this phone";
+      if (d.offline) el.classList.add("phone-off");
+      const badge = document.createElement("span"); badge.className = "badge"; badge.textContent = d.offline ? "💤" : d.connection === "USB" ? "🔌 USB" : "📶 Wi-Fi";
+      el.append(badge,
+        miniBtn(d.favorite ? "★" : "☆", d.favorite ? "Remove from favorites" : "Make this phone a favorite (it stays in the list and sorts first)", () => patchPhone(d, { favorite: !d.favorite })),
+        miniBtn("✎", "Rename this phone", () => renamePhone(el, d)));
+      el.title = "Click to control this phone";
       el.onclick = () => selectDevice(d.udid);
       return el;
     }) : (missing ? [] : [li("No phones found. Plug one in, or see Wi-Fi setup below.")])));
     otherLayer.clearLayers();
     devices.filter((d) => d.simulating && normUdid(d.udid) !== normUdid(device)).forEach((d) =>
       L.marker([d.lat, d.lon], { icon: L.divIcon({ className: "", html: '<div class="other-phone"></div>', iconSize: [14, 14] }), interactive: false })
-        .bindTooltip(d.name, { permanent: false }).addTo(otherLayer));
+        .bindTooltip(d.display_name || d.name, { permanent: false }).addTo(otherLayer));
+  }
+  async function patchPhone(d, body) {
+    try { await api("PATCH", `/api/devices/${encodeURIComponent(d.udid)}`, body); await loadDevices(true); if (status) render(status); }
+    catch (e) { fail(e); }
+  }
+  function renamePhone(row, d) {                       // edit the name right in the list (Enter saves, Esc cancels, empty = its own name)
+    const input = document.createElement("input"); input.value = d.nickname || d.name; input.maxLength = 40; input.className = "phonename"; input.setAttribute("aria-label", "Phone name");
+    let done = false;
+    const finish = async (save) => { if (done) return; done = true; if (save && input.value.trim() !== (d.nickname || d.name)) await patchPhone(d, { nickname: input.value.trim() === d.name ? "" : input.value.trim() }); else renderPhones(); };
+    input.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") finish(true); else if (e.key === "Escape") finish(false); };
+    input.onclick = (e) => e.stopPropagation(); input.onblur = () => finish(true);
+    row.replaceChildren(input); input.focus(); input.select();
   }
   function selectDevice(udid) {
     if (normUdid(udid) === normUdid(device)) return;
@@ -883,7 +900,7 @@
     };
     $("planEditor").hidden = false; $("newPlanBtn").hidden = true; $("editorTitle").textContent = plan ? `Edit “${plan.name}”` : "New plan";
     $("planName").value = editor.name; $("planDate").value = editor.date; $("planGrace").value = editor.grace;
-    $("planDevice").replaceChildren(...[["", "Default phone"], ...devices.map((d) => [d.udid, `${d.name}${d.ios_version ? ` · iOS ${d.ios_version}` : ""}`])].map(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; return o; }));
+    $("planDevice").replaceChildren(...[["", "Default phone"], ...devices.map((d) => [d.udid, `${d.favorite ? "★ " : ""}${d.display_name || d.name}${d.ios_version ? ` · iOS ${d.ios_version}` : ""}`])].map(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; return o; }));
     $("planDevice").value = editor.device; renderEditorSteps();
     $("planEditor").scrollIntoView({ block: "nearest" });
   }
@@ -1105,7 +1122,7 @@
     chip.dataset.state = s.state;
     if (s.state === "ready") {
       const d = s.device;
-      $("deviceText").textContent = `${d.name} · iOS ${d.ios_version}${d.connection === "Wi-Fi" ? " · 📶" : ""}`;
+      $("deviceText").textContent = `${knownNames[normUdid(d.udid)] || d.name} · iOS ${d.ios_version}${d.connection === "Wi-Fi" ? " · 📶" : ""}`;
       chip.title = `Phones & connection (${d.connection}; ${d.method})`; banner.hidden = true;
       const wifi = $("wifiSwitch"); wifi.checked = !!d.wifi_enabled; wifi.disabled = d.connection !== "USB" || d.wifi_enabled === null;
       $("wifiSmall").textContent = d.connection !== "USB" ? "Connected over Wi-Fi. Plug in a cable to change this."

@@ -388,3 +388,6 @@ kbd { font: 600 11.5px ui-monospace, Menlo, monospace; padding: 2px 6px; border-
 .steprow .stephead .whensel { flex: none; max-width: 150px; }
 .steprow .stephead .num { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; flex-wrap: wrap; }
 .steprow .stephead .num input { width: 64px; flex: none; padding: 6px 6px; text-align: center; }
+
+#phoneList .phone-off { opacity: .6; }
+#phoneList .phonename { flex: 1; min-width: 0; padding: 4px 8px; }
