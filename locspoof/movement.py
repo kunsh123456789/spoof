@@ -45,6 +45,19 @@ def step_towards(
     return math.degrees(math.atan2(z, math.hypot(x, y))), math.degrees(math.atan2(y, x)), False
 
 
+def bearing_deg(a: tuple[float, float], b: tuple[float, float]) -> float:
+    p1, p2, dl = math.radians(a[0]), math.radians(b[0]), math.radians(b[1] - a[1])
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return (math.degrees(math.atan2(y, x)) + 360) % 360
+
+
+def turn_angle_deg(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float]) -> float:
+    """Absolute change of direction (0-180) when walking a -> b -> c."""
+    d = abs(bearing_deg(b, c) - bearing_deg(a, b)) % 360
+    return 360 - d if d > 180 else d
+
+
 class PathFollower:
     """Walks a polyline [(lat, lon), ...] by distance; handles steps that span several vertices."""
 
@@ -55,6 +68,7 @@ class PathFollower:
         self.pos = self.points[0]
         self._next = 1
         self._remaining = sum(haversine_m(*a, *b) for a, b in zip(self.points, self.points[1:]))
+        self.passed_turns: list[float] = []   # turn angles of the vertices passed by the last advance()
 
     @property
     def remaining_m(self) -> float:
@@ -64,14 +78,27 @@ class PathFollower:
     def done(self) -> bool:
         return self._next >= len(self.points)
 
+    def upcoming_turn(self) -> tuple[float | None, float]:
+        """(distance to the next vertex, turn angle there). (None, 0) when there is no next vertex."""
+        if self.done:
+            return None, 0.0
+        nxt = self.points[self._next]
+        dist = haversine_m(*self.pos, *nxt)
+        if self._next + 1 >= len(self.points):
+            return dist, 0.0
+        return dist, turn_angle_deg(self.pos, nxt, self.points[self._next + 1])
+
     def advance(self, distance_m: float) -> tuple[float, float, bool]:
         """Move ``distance_m`` along the path. Returns (lat, lon, done)."""
+        self.passed_turns = []
         while distance_m > 0 and not self.done:
             target = self.points[self._next]
             seg = haversine_m(*self.pos, *target)
             if seg <= distance_m:
                 distance_m -= seg
                 self._remaining -= seg
+                if 0 < self._next < len(self.points) - 1 and seg > 0:
+                    self.passed_turns.append(turn_angle_deg(self.pos, target, self.points[self._next + 1]))
                 self.pos = target
                 self._next += 1
             else:

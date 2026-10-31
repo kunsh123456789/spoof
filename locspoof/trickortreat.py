@@ -11,6 +11,7 @@ from typing import Optional
 import httpx
 
 from .errors import AppError
+from .busy import BusyRoads, busy_query, parse_busy_roads
 from .movement import Polygon, haversine_m, point_in_polygon
 
 log = logging.getLogger("locspoof.tot")
@@ -55,14 +56,35 @@ def dedupe(points: list[Point], min_dist: float = DEDUPE_M) -> list[Point]:
     return kept
 
 
+BUSY_ROAD_MARGIN_M = 20.0   # houses closer than this to a big road are skipped when avoiding busy roads
+KIDS_DWELL_FACTOR = 1.6
+CROSS_TEST_LIMIT = 40        # nearest candidates examined per step when looking for a leg that crosses no big road
+LIGHTS_OFF_P, CHAT_P = 0.15, 0.15
+
+
 def build_plan(
     points: list[Point], center: Point, count: int, rng: Optional[random.Random] = None,
-    dwell_range: tuple[float, float] = (20.0, 70.0),
+    dwell_range: tuple[float, float] = (20.0, 70.0), *, realistic: bool = False, kids: bool = False,
+    busy: Optional[BusyRoads] = None, info: Optional[dict] = None,
 ) -> list[dict]:
     """Greedy nearest-neighbour tour starting at the house nearest ``center``, with random dwell times
-    (about one stop in five is a longer chat at the door)."""
+    (about one stop in five is a longer chat at the door).
+
+    * ``busy``: houses within 20 m of a big road are dropped and no leg of the tour may cross one (the tour
+      simply ends early rather than crossing).
+    * ``kids``: a group of children dawdles, so every pause is 1.6x longer.
+    * ``realistic``: about 15% of houses have their lights off (marked ``lights_off``, to be skipped) and
+      about 15% turn into a long chat at the door.
+    ``info`` (optional) receives {"skipped_busy": n, "cut_by_busy": bool} for the UI.
+    """
     rng = rng or random.Random()
+    info = info if info is not None else {}
     remaining = dedupe(points)
+    info.update(skipped_busy=0, cut_by_busy=False)
+    if busy:
+        kept = [p for p in remaining if not busy.near(p, BUSY_ROAD_MARGIN_M)]
+        info["skipped_busy"] = len(remaining) - len(kept)
+        remaining = kept
     if not remaining:
         return []
     cur = min(remaining, key=lambda p: haversine_m(*center, *p))
@@ -70,14 +92,28 @@ def build_plan(
     while remaining and len(tour) < count:
         remaining.remove(cur)
         tour.append(cur)
-        if remaining:
-            cur = min(remaining, key=lambda p: haversine_m(*cur, *p))
+        if not remaining:
+            break
+        ranked = sorted(remaining, key=lambda p: haversine_m(*cur, *p))
+        if not busy:
+            cur = ranked[0]
+            continue
+        nxt = next((p for p in ranked[:CROSS_TEST_LIMIT] if not busy.crosses(cur, p)), None)
+        if nxt is None:                       # every nearby house is across a big road: stop here
+            info["cut_by_busy"] = True
+            break
+        cur = nxt
     plan = []
-    for lat, lon in tour:
+    for i, (lat, lon) in enumerate(tour):
+        lights_off = realistic and i > 0 and rng.random() < LIGHTS_OFF_P
         dwell = rng.uniform(*dwell_range)
         if rng.random() < 0.2:
             dwell += rng.uniform(20, 50)
-        plan.append({"lat": lat, "lon": lon, "dwell_s": round(dwell, 1)})
+        if realistic and rng.random() < CHAT_P:
+            dwell += rng.uniform(40, 90)
+        if kids:
+            dwell *= KIDS_DWELL_FACTOR
+        plan.append({"lat": lat, "lon": lon, "dwell_s": 0.0 if lights_off else round(dwell, 1), "lights_off": lights_off})
     return plan
 
 
@@ -86,14 +122,16 @@ class HouseFinder:
         self._client = client
         self.offline = offline            # OfflineStore (fallback when Overpass is unreachable)
         self.last_source = "online"
+        self.last_notes: list[str] = []
         self._min_interval = min_interval
         self._lock = asyncio.Lock()
         self._last = 0.0
 
     async def plan(
         self, lat: float, lon: float, radius_m: int, count: int, rng: Optional[random.Random] = None,
-        polygon: Optional[Polygon] = None,
+        polygon: Optional[Polygon] = None, *, realistic: bool = False, kids: bool = False, avoid_busy: bool = False,
     ) -> list[dict]:
+        self.last_notes = []
         try:
             points = await self._fetch(lat, lon, radius_m, polygon)
             self.last_source = "online"
@@ -105,17 +143,36 @@ class HouseFinder:
             points, self.last_source = saved, "offline"
         if polygon:  # Overpass may return buildings that merely touch the shape; keep only those inside it
             points = [p for p in points if point_in_polygon(p[0], p[1], polygon)]
-        plan = build_plan(points, (lat, lon), count, rng)
+        busy = await self._busy_roads(lat, lon, radius_m, polygon) if avoid_busy else None
+        info: dict = {}
+        plan = build_plan(points, (lat, lon), count, rng, realistic=realistic, kids=kids, busy=busy or None, info=info)
+        if avoid_busy and busy is None:
+            self.last_notes.append("Could not load road data, so busy roads were not avoided.")
+        elif avoid_busy and not busy:
+            self.last_notes.append("No major roads found here, so nothing needed avoiding.")
+        if info.get("skipped_busy"):
+            self.last_notes.append(f"Skipped {info['skipped_busy']} house(s) right next to busy roads.")
+        if info.get("cut_by_busy"):
+            self.last_notes.append("The tour stops early because the next houses are across a busy road.")
         if len(plan) < MIN_HOUSES:
             where = "inside the area you drew" if polygon else f"within {radius_m} m"
             raise AppError(
                 "no_houses",
                 f"Found only {len(plan)} house(s) {where}.",
-                "Draw a bigger area over a residential neighborhood." if polygon
-                else "Move the pin to a residential street, or draw an area.",
+                ("Turn off “Avoid busy roads”, d" if avoid_busy and (info.get("skipped_busy") or info.get("cut_by_busy")) else "D")
+                + ("raw a bigger area over a residential neighborhood." if polygon else "rop the pin on a residential street, or draw an area."),
                 404,
             )
         return plan
+
+    async def _busy_roads(self, lat: float, lon: float, radius_m: int, polygon: Optional[Polygon]) -> Optional[BusyRoads]:
+        """Busy-road geometry from Overpass, else from a saved offline area; None if neither is available."""
+        origin = (lat, lon)
+        try:
+            return BusyRoads(parse_busy_roads(await self.query_json(busy_query(lat, lon, radius_m, polygon))), origin)
+        except AppError:
+            lines = self.offline.busy_roads(lat, lon, polygon) if self.offline else None
+            return BusyRoads(lines, origin) if lines is not None else None
 
     async def _fetch(self, lat: float, lon: float, radius_m: int, polygon: Optional[Polygon] = None) -> list[Point]:
         return parse_points(await self.query_json(build_query(lat, lon, radius_m, polygon)))

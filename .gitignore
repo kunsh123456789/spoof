@@ -1,7 +1,10 @@
-.venv/
-__pycache__/
 *.pyc
 .pytest_cache/
+.venv/
+__pycache__/
+devices.json
 favorites.json
-recent.json
 offline/
+recent.json
+routes.json
+settings.json

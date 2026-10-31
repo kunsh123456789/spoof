@@ -6,21 +6,26 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Header, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .device import Backend, DeviceManager, JourneyPlan, PmdBackend, Stop
+from .fleet import Fleet
+from .memory import DeviceMemory
 from .errors import AppError
 from .favorites import FavoritesStore
+from .gpx import MAX_BYTES as GPX_MAX_BYTES, parse_gpx
 from .geocode import Geocoder
 import httpx
 
 from .movement import point_in_polygon, polygon_area_m2, polygon_centroid, validate_coords
 from .offline import OfflineDownloader, OfflineStore, fetch_tile
 from .recents import RecentsStore
+from .routes import RoutesStore
 from .routing import Router
+from .settings import SettingsStore
 from .trickortreat import HouseFinder
 
 log = logging.getLogger("locspoof.server")
@@ -39,6 +44,9 @@ class LocationRequest(Coords):
 
 class StopModel(Coords):
     dwell_s: float = 0.0
+    mode: Optional[str] = None
+    speed_kmh: Optional[float] = None
+    label: Optional[str] = None
 
 
 class JourneyRequest(BaseModel):
@@ -49,6 +57,23 @@ class JourneyRequest(BaseModel):
     jump_to_first: bool = False
     kind: str = "route"
     speed_jitter: float = 0.0
+    return_to_start: bool = False
+    path: Optional[list[list[float]]] = None   # exact GPX polyline [[lat, lon], ...]
+
+
+class RouteRequest(BaseModel):
+    name: str
+    kind: str = "stops"
+    stops: list[StopModel]
+    path: Optional[list[list[float]]] = None
+    mode: str = "walk"
+    speed_kmh: float = 5.0
+    loop: bool = False
+    return_to_start: bool = False
+
+
+class RouteStartRequest(BaseModel):
+    jump_to_first: Optional[bool] = None
 
 
 class SpeedRequest(BaseModel):
@@ -96,6 +121,13 @@ def create_app(
     house_finder: Optional[HouseFinder] = None,
     recents_path: Optional[Path] = None,
     offline_root: Optional[Path] = None,
+    settings_path: Optional[Path] = None,
+    devices_path: Optional[Path] = None,
+    backend_factory=None,
+    discovery: Optional[Backend] = None,
+    routes_path: Optional[Path] = None,
+    ambient_tick: float = 2.5,
+    rng=None,
     tile_client: Optional[httpx.AsyncClient] = None,
     tile_delay: float = 0.3,
     tunnel_mode: str = "auto",
@@ -103,10 +135,25 @@ def create_app(
 ) -> FastAPI:
     favorites = FavoritesStore(favorites_path or ROOT / "favorites.json")
     recents = RecentsStore(recents_path or ROOT / "recent.json")
-    manager = DeviceManager(
-        backend or PmdBackend(tunnel_mode), walk_tick=walk_tick,
-        on_finish=lambda lat, lon: recents.add(lat, lon, "Route end"),
-    )
+    settings = SettingsStore(settings_path or ROOT / "settings.json")
+    routes = RoutesStore(routes_path or ROOT / "routes.json")
+    memory = DeviceMemory(devices_path or ROOT / "devices.json")
+
+    def make_manager(be: Backend) -> DeviceManager:
+        return DeviceManager(
+            be, walk_tick=walk_tick, settings=settings.data, ambient_tick=ambient_tick, rng=rng, memory=memory,
+            on_finish=lambda lat, lon: recents.add(lat, lon, "Route end"),
+        )
+
+    if backend is not None:                       # one injected backend (tests): a single phone
+        single = make_manager(backend)
+        fleet = Fleet(backend, lambda u: backend, make_manager, single=single)
+    elif backend_factory is not None:             # injected per-phone backends (multi-phone tests)
+        fleet = Fleet(discovery or backend_factory(None), backend_factory, make_manager)
+        single = None
+    else:
+        fleet = Fleet(PmdBackend(tunnel_mode), lambda u: PmdBackend(tunnel_mode, udid=u), make_manager)
+        single = None
     geo = geocoder or Geocoder()
     offline = OfflineStore(offline_root or ROOT / "offline")
     road_router = router or Router(offline=offline)
@@ -116,11 +163,17 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         yield
-        # Closing the session also ends an iOS 17+ simulation; the phone returns to real GPS.
-        await manager.shutdown()
+        # Closing the session also ends an iOS 17+ simulation; the phones return to real GPS.
+        await fleet.shutdown()
 
     app = FastAPI(title="iPhone Location Simulator", lifespan=lifespan)
-    app.state.manager = manager
+    app.state.manager = single
+    app.state.fleet = fleet
+
+    async def get_manager(x_device: Optional[str] = Header(default=None)) -> DeviceManager:
+        """The phone a request is about: the X-Device header (a UDID), else the first phone found."""
+        return await fleet.get(x_device)
+
 
     @app.middleware("http")
     async def no_cache(request: Request, call_next):
@@ -148,46 +201,64 @@ def create_app(
         )
 
     @app.get("/api/status")
-    async def status():
+    async def status(manager: DeviceManager = Depends(get_manager)):
         return await manager.status()
 
     @app.post("/api/trust")
-    async def trust():
+    async def trust(manager: DeviceManager = Depends(get_manager)):
         await manager.trust()
         return await manager.status(force=True)
 
     @app.post("/api/location")
-    async def set_location(body: LocationRequest):
+    async def set_location(body: LocationRequest, manager: DeviceManager = Depends(get_manager)):
         validate_coords(body.lat, body.lon)
         result = await manager.set_location(body.lat, body.lon)
         recents.add(body.lat, body.lon, body.label)
         return result
 
     @app.delete("/api/location")
-    async def clear_location():
+    async def clear_location(manager: DeviceManager = Depends(get_manager)):
         return await manager.clear_location()
 
-    @app.post("/api/journey")
-    async def start_journey(body: JourneyRequest):
-        plan = JourneyPlan(
-            stops=[Stop(s.lat, s.lon, s.dwell_s) for s in body.stops], mode=body.mode, speed_kmh=body.speed_kmh,
-            loop=body.loop, jump_to_first=body.jump_to_first, kind=body.kind, speed_jitter=body.speed_jitter,
+    def plan_from(body: JourneyRequest) -> JourneyPlan:
+        stops = [Stop(x.lat, x.lon, x.dwell_s, x.mode or None, x.speed_kmh or None) for x in body.stops]
+        path = None
+        if body.path:
+            path = [tuple(p) for p in body.path if len(p) == 2]
+            if len(path) != len(body.path):
+                raise AppError("bad_path", "The track has an invalid point.", status=422)
+            stops = stops or [Stop(path[-1][0], path[-1][1])]
+        return JourneyPlan(
+            stops=stops, mode=body.mode, speed_kmh=body.speed_kmh, loop=body.loop, jump_to_first=body.jump_to_first,
+            kind=body.kind, speed_jitter=body.speed_jitter, return_to_start=body.return_to_start, path=path,
         )
-        result = await manager.start_journey(plan, road_router)
+
+    async def run_journey(body: JourneyRequest, manager: DeviceManager):
+        result = await manager.start_journey(plan_from(body), road_router)
         if body.jump_to_first:
-            recents.add(body.stops[0].lat, body.stops[0].lon, "Trick-or-treat start" if body.kind == "trick_or_treat" else None)
+            first = body.path[0] if body.path else [body.stops[0].lat, body.stops[0].lon]
+            recents.add(first[0], first[1], "Trick-or-treat start" if body.kind == "trick_or_treat" else None)
+        return {**result, "route": manager.route_points()}
+
+    @app.post("/api/journey")
+    async def start_journey(body: JourneyRequest, manager: DeviceManager = Depends(get_manager)):
+        return await run_journey(body, manager)
+
+    @app.post("/api/journey/return")
+    async def journey_return(manager: DeviceManager = Depends(get_manager)):
+        result = await manager.return_to_origin(road_router)
         return {**result, "route": manager.route_points()}
 
     @app.get("/api/journey/route")
-    async def journey_route():
+    async def journey_route(manager: DeviceManager = Depends(get_manager)):
         return {"route": manager.route_points()}
 
     @app.patch("/api/journey")
-    async def journey_speed(body: SpeedRequest):
+    async def journey_speed(body: SpeedRequest, manager: DeviceManager = Depends(get_manager)):
         return manager.set_walk_speed(body.speed_kmh)
 
     @app.delete("/api/journey")
-    async def journey_stop():
+    async def journey_stop(manager: DeviceManager = Depends(get_manager)):
         return manager.stop_walk()
 
     @app.post("/api/trick-or-treat/plan")
@@ -220,8 +291,15 @@ def create_app(
             if not 100 <= body.radius_m <= 1500:
                 raise AppError("bad_radius", "Radius must be between 100 and 1500 m.", status=422)
             lat, lon = body.lat, body.lon
-        plan = await houses.plan(lat, lon, body.radius_m, body.houses, polygon=polygon)
-        return {"houses": plan, "source": getattr(houses, "last_source", "online")}
+        opts = {"realistic": settings.data["tot_realistic"], "kids": settings.data["tot_kids"],
+                "avoid_busy": settings.data["tot_avoid_busy"]}
+        plan = await houses.plan(lat, lon, body.radius_m, body.houses, polygon=polygon, **opts)
+        kids = opts["kids"]
+        return {
+            "houses": plan, "source": getattr(houses, "last_source", "online"), "notes": getattr(houses, "last_notes", []),
+            # recommended pace for the walk: a group of kids dawdles
+            "pace": {"speed_kmh": 3.2 if kids else 4.5, "speed_jitter": 0.3 if kids else 0.2},
+        }
 
     # ---- offline packs ----
     @app.get("/api/offline")
@@ -257,6 +335,65 @@ def create_app(
         if resp.status_code != 200:
             return Response(status_code=404)
         return Response(resp.content, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
+
+    # ---- phones ----
+    @app.get("/api/devices")
+    async def list_devices(fresh: bool = False):
+        return {"devices": await fleet.devices(fresh=fresh)}
+
+    @app.post("/api/devices/scan")
+    async def scan_wifi():
+        """Look for paired iPhones on the local network (Bonjour)."""
+        await fleet.scan_wifi()
+        return {"devices": await fleet.devices(fresh=True)}
+
+    @app.post("/api/wifi")
+    async def set_wifi(body: dict, manager: DeviceManager = Depends(get_manager)):
+        if not isinstance(body.get("enabled"), bool):
+            raise AppError("bad_request", "Send {\"enabled\": true or false}.", status=422)
+        await manager.set_wifi(body["enabled"])
+        return await manager.status(force=True)
+
+    @app.get("/api/settings")
+    async def get_settings():
+        return settings.data
+
+    @app.patch("/api/settings")
+    async def patch_settings(body: dict):
+        return settings.update(body)
+
+    @app.post("/api/gpx")
+    async def gpx_import(request: Request):
+        data = await request.body()
+        return parse_gpx(data[: GPX_MAX_BYTES + 1])
+
+    @app.get("/api/routes")
+    async def list_routes():
+        return {"routes": routes.list()}
+
+    @app.post("/api/routes")
+    async def save_route(body: RouteRequest):
+        stops = [x.model_dump() for x in body.stops]
+        return routes.add(body.name, body.kind, stops, body.path, body.mode, body.speed_kmh, body.loop, body.return_to_start)
+
+    @app.delete("/api/routes/{route_id}")
+    async def delete_route(route_id: str):
+        if not routes.delete(route_id):
+            raise AppError("not_found", "Saved route not found.", status=404)
+        return {"ok": True}
+
+    @app.post("/api/routes/{route_id}/start")
+    async def start_saved_route(route_id: str, body: RouteStartRequest, manager: DeviceManager = Depends(get_manager)):
+        r = routes.get(route_id)
+        if not r:
+            raise AppError("not_found", "Saved route not found.", status=404)
+        jump = body.jump_to_first if body.jump_to_first is not None else False
+        req = JourneyRequest(
+            stops=[StopModel(**{k: v for k, v in s_.items() if k in StopModel.model_fields}) for s_ in r["stops"]],
+            path=r.get("path"), mode=r["mode"], speed_kmh=r["speed_kmh"], loop=r.get("loop", False),
+            return_to_start=r.get("return_to_start", False), jump_to_first=jump,
+        )
+        return await run_journey(req, manager)
 
     @app.get("/api/recent")
     async def list_recent():

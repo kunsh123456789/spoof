@@ -298,6 +298,18 @@ class OfflineStore:
         self._graphs[pid] = g
         return g
 
+    def busy_roads(self, lat: float, lon: float, polygon: Optional[list[Point]] = None) -> Optional[list[list[Point]]]:
+        """Busy-road polylines from a saved area covering the point, or None if no area covers it."""
+        from .busy import parse_busy_roads
+        for pid, bbox in self._packs_with_bbox():
+            if not (bbox_contains(bbox, lat, lon) or (polygon and any(bbox_contains(bbox, *p) for p in polygon))):
+                continue
+            try:
+                return parse_busy_roads(json.loads((self.packs_dir / pid / "roads.json").read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                continue
+        return None
+
     def houses_near(self, lat: float, lon: float, radius_m: float, polygon: Optional[list[Point]] = None) -> list[Point]:
         out: list[Point] = []
         for pid, bbox in self._packs_with_bbox():

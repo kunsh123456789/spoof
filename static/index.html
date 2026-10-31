@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>iPhone Location Simulator</title>
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=8">
+  <link rel="stylesheet" href="/static/style.css?v=11">
 </head>
 <body>
   <div id="map" aria-label="Map"></div>
@@ -15,8 +15,30 @@
   <aside id="panel">
     <header>
       <h1>iPhone Location</h1>
-      <div id="device" class="chip" data-state="loading"><span class="dot"></span><span id="deviceText">Checking…</span></div>
+      <button id="device" class="chip" data-state="loading" title="Phones & connection"><span class="dot"></span><span id="deviceText">Checking…</span><span id="phoneCount" class="count" hidden></span></button>
     </header>
+
+    <details id="phonesBox" class="phones">
+      <summary>📱 Phones &amp; connection</summary>
+      <ul id="phoneList" class="list"></ul>
+      <div class="row">
+        <button id="scanBtn" class="secondary">🔍 Find Wi-Fi phones</button>
+      </div>
+      <label class="sw"><input type="checkbox" id="wifiSwitch"><span class="track"></span>
+        <span><b>Allow connecting over Wi-Fi</b><small id="wifiSmall">Turn this on while the phone is plugged in, then you can unplug it.</small></span></label>
+      <label class="sw"><input type="checkbox" data-setting="auto_reconnect"><span class="track"></span>
+        <span><b>Auto-reconnect</b><small>If the cable or Wi-Fi drops, wait for the phone, restore the fake location and carry on with the route.</small></span></label>
+      <details class="howto" id="how-wifi">
+        <summary>Wi-Fi setup (no cable)</summary>
+        <ol>
+          <li>Plug the iPhone in <b>once</b>, tap <b>Trust</b>, and turn on Developer Mode.</li>
+          <li>Switch on <b>Allow connecting over Wi-Fi</b> above (needs the cable).</li>
+          <li>Put the Mac and iPhone on the <b>same Wi-Fi network</b> and keep the iPhone awake and unlocked.</li>
+          <li>Unplug. Within a few seconds the phone shows a <b>Wi-Fi</b> badge. If not, press <b>Find Wi-Fi phones</b>. On a Mac you may also need Finder → your iPhone → <i>Show this iPhone when on Wi-Fi</i>.</li>
+        </ol>
+        <p class="muted">Wi-Fi is newer than the cable and can be less reliable; iOS 17.0–17.3 over Wi-Fi may need the <code>tunneld</code> command from the README. Controlling <b>two iOS 17+ phones</b> at once also needs <code>tunneld</code>.</p>
+      </details>
+    </details>
 
     <div id="banner" class="banner" hidden>
       <strong id="bannerMsg"></strong>
@@ -25,6 +47,11 @@
     </div>
 
     <p id="netNote" class="netnote" hidden>📡 No internet connection — saved offline areas still work.</p>
+
+    <div id="notice" class="notice" hidden>
+      <strong id="noticeMsg"></strong>
+      <p id="noticeHint"></p>
+    </div>
 
     <nav id="tabs" role="tablist">
       <button role="tab" data-tab="place" class="active">📍<span>Place</span></button>
@@ -65,8 +92,10 @@
           <ol>
             <li>First <b>set a starting location</b> in the Place tab.</li>
             <li>Choose a <b>path type</b>: <i>Straight line</i> goes directly; <i>Walking</i> / <i>Driving</i> follow real roads.</li>
-            <li>Choose a <b>speed</b>, then either go to <b>one destination</b> (the pin) or build a <b>multi-stop route</b>.</li>
-            <li>You can change the speed while moving. Use <b>Stop moving</b> in the bottom bar to halt.</li>
+            <li>Choose a <b>speed</b>, then go to <b>one destination</b> (the pin), build a <b>multi-stop route</b>, or play a <b>GPX file</b>.</li>
+            <li>In a multi-stop route each stop can have its own <b>path type and speed</b> (walk to the car, then drive).</li>
+            <li><b>Return to start</b> sends you back where the trip began. <b>Save route</b> keeps it in the Saved tab.</li>
+            <li>The <b>Realism</b> switches below make the movement less robotic.</li>
           </ol>
         </details>
         <h2>Path type</h2>
@@ -87,8 +116,9 @@
 
         <h2>Destination</h2>
         <div class="seg" role="radiogroup" aria-label="Destination type">
-          <button class="segbtn kindbtn active" data-kind="single" role="radio">One destination</button>
-          <button class="segbtn kindbtn" data-kind="multi" role="radio">Multi-stop route</button>
+          <button class="segbtn kindbtn active" data-kind="single" role="radio">One</button>
+          <button class="segbtn kindbtn" data-kind="multi" role="radio">Multi-stop</button>
+          <button class="segbtn kindbtn" data-kind="gpx" role="radio">GPX file</button>
         </div>
         <div id="kindSingle">
           <p class="pinline" data-pinline></p>
@@ -101,12 +131,49 @@
             <button id="clearStopsBtn" class="secondary">Clear stops</button>
           </div>
           <ol id="stops" class="list stops"></ol>
+          <p class="muted">Tip: give a stop its own path type and speed to change pace along the route.</p>
           <div class="row opts">
             <label>Pause at each stop (seconds) <input id="dwell" type="number" min="0" max="900" value="0"></label>
             <label class="check"><input id="loop" type="checkbox"> Loop</label>
           </div>
+          <div class="row opts">
+            <input id="routeName" placeholder="Route name" maxlength="80" aria-label="Route name">
+            <button id="saveRouteBtn" class="secondary">💾 Save route</button>
+          </div>
           <button id="routeBtn" class="primary full">Start route</button>
         </div>
+        <div id="kindGpx" hidden>
+          <p class="muted">Play back a recorded track (a <b>.gpx</b> file from a running, hiking or maps app).</p>
+          <input id="gpxFile" type="file" accept=".gpx,application/gpx+xml,text/xml,application/xml" aria-label="GPX file">
+          <div id="gpxInfo" class="infocard" hidden></div>
+          <div id="gpxOpts" hidden>
+            <label class="check"><input id="gpxJump" type="checkbox" checked> Jump to the track's start</label>
+            <div class="row opts">
+              <button id="gpxPaceBtn" class="secondary" hidden>Use recorded pace</button>
+            </div>
+            <div class="row opts">
+              <input id="gpxName" placeholder="Name to save as" maxlength="80" aria-label="Saved track name">
+              <button id="saveTrackBtn" class="secondary">💾 Save</button>
+            </div>
+            <button id="gpxStartBtn" class="primary full">▶ Start track</button>
+          </div>
+        </div>
+
+        <div class="row opts retrow">
+          <label class="check"><input id="returnTrip" type="checkbox"> Return to start when finished</label>
+          <button id="returnBtn" class="secondary" hidden title="Go back to where the last trip started">↩ Return now</button>
+        </div>
+
+        <h2>Realism</h2>
+        <label class="sw"><input type="checkbox" data-setting="noise"><span class="track"></span>
+          <span><b>GPS noise</b><small>A few metres of natural drift, even while standing still.</small></span></label>
+        <label class="sw"><input type="checkbox" data-setting="natural_walk"><span class="track"></span>
+          <span><b>Natural walking</b><small>Pace varies a little and eases off before sharp corners.</small></span></label>
+        <label class="sw"><input type="checkbox" data-setting="traffic_stops"><span class="track"></span>
+          <span><b>Traffic stops</b><small>Driving routes pause now and then at junctions, like lights.</small></span></label>
+        <label class="sw"><input type="checkbox" data-setting="cooldown_hint"><span class="track"></span>
+          <span><b>Jump cooldown timer</b><small>After a big jump, shows how long a real trip would take.</small></span></label>
+        <p class="muted">Not possible with this method: compass heading and altitude.</p>
       </section>
 
       <!-- ============ TRICK OR TREAT ============ -->
@@ -134,12 +201,21 @@
           <button id="cancelDrawBtn" class="secondary">Cancel</button>
         </div>
 
+        <h2>Options</h2>
+        <label class="sw"><input type="checkbox" data-setting="tot_kids"><span class="track"></span>
+          <span><b>👨‍👩‍👧 Group of kids</b><small>Slower walking pace and longer pauses at every door.</small></span></label>
+        <label class="sw"><input type="checkbox" data-setting="tot_avoid_busy"><span class="track"></span>
+          <span><b>🛣️ Avoid busy roads</b><small>Skips houses on big roads and never crosses one (the tour stays on one side).</small></span></label>
+        <label class="sw"><input type="checkbox" data-setting="tot_realistic"><span class="track"></span>
+          <span><b>🌙 Realistic houses</b><small>Some houses have their lights off (skipped); some turn into a long chat.</small></span></label>
+
         <h2>Houses</h2>
         <label class="slider">Number of houses: <b><output id="housesOut">20</output></b>
           <input id="houses" type="range" min="5" max="40" step="1" value="20">
         </label>
         <button id="findBtn" class="secondary full"><span class="step">2</span> Find houses</button>
         <p id="totInfo" class="infocard" hidden></p>
+        <ul id="totNotes" class="notes" hidden></ul>
         <button id="totStartBtn" class="primary full" disabled><span class="step">3</span> Start trick-or-treating</button>
       </section>
 
@@ -150,9 +226,12 @@
           <ol>
             <li><b>Favorites:</b> type a name, then a place name, coordinates like <code>48.8584, 2.2945</code>, or leave blank to save the current pin.</li>
             <li>Click any saved place to put the pin there. <b>＋</b> adds it as a stop in the Move tab.</li>
+            <li><b>Saved routes</b> are multi-stop routes and GPX tracks you saved in the Move tab. <b>▶</b> runs one, <b>✎</b> loads it into the editor.</li>
             <li><b>Recent</b> remembers your last 15 locations automatically. Press <b>★</b> to promote one to a favorite.</li>
           </ol>
         </details>
+        <h2>Saved routes</h2>
+        <ul id="routes" class="list"></ul>
         <h2>Favorites</h2>
         <form id="favForm">
           <div class="row">
@@ -191,6 +270,7 @@
       </section>
     </div>
 
+    <p id="cooldownNote" class="netnote" hidden></p>
     <footer id="now" data-state="idle">
       <div class="nowtext">
         <strong id="nowTitle">Real GPS</strong>
@@ -206,6 +286,6 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/app.js?v=8"></script>
+  <script src="/static/app.js?v=11"></script>
 </body>
 </html>

@@ -88,12 +88,26 @@ def test_reconnects_once_on_stale_session(make_client, backend):
     assert len(backend.sessions) == 2 and backend.sessions[1].calls == [("set", 3, 4)]
 
 
-def test_device_unplugged_resets_dvt_state(make_client, backend):
+def test_device_unplugged_keeps_position_and_restores_it_when_back(make_client, backend):
     with make_client(backend) as c:
         c.post("/api/location", json={"lat": 1, "lon": 2})
-        backend.problem = "no_device"
-        s = c.get("/api/status?x=1")
+        backend.unplug()
         time.sleep(2.1)  # status cache
+        s = c.get("/api/status").json()
+        assert s["state"] == "no_device" and s["simulation"]["active"] and s["simulation"]["reconnecting"]
+        backend.replug()
+        time.sleep(2.1)
+        s = c.get("/api/status").json()
+        assert s["state"] == "ready" and "reconnecting" not in s["simulation"]
+        assert backend.sessions[-1] is not backend.sessions[0] and backend.sessions[-1].calls == [("set", 1, 2)]
+
+
+def test_device_unplugged_resets_state_when_auto_reconnect_is_off(make_client, backend):
+    with make_client(backend) as c:
+        c.patch("/api/settings", json={"auto_reconnect": False})
+        c.post("/api/location", json={"lat": 1, "lon": 2})
+        backend.problem = "no_device"
+        time.sleep(2.1)
         s = c.get("/api/status").json()
         assert s["state"] == "no_device" and s["simulation"] == {"active": False}
 

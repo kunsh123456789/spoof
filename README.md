@@ -13,7 +13,7 @@ Everything runs on localhost — no accounts, no cloud services, no API keys.
 device status (name, iOS version, clear errors) · click-to-pin map + manual lat/lon · place search ·
 Set / Clear location · **road routes** (walking or driving paths, or a straight line) with adjustable speed ·
 **multi-stop routes** (pauses, looping) · **trick-or-treat mode** (orange theme) · saved favorites ·
-recent locations · **offline areas** (map, houses and streets saved for use without internet) · dark mode · phone-friendly layout.
+recent locations · **offline areas** (map, houses and streets saved for use without internet) · **realism switches** (GPS noise, natural walking, traffic stops, jump cooldown) · **return trip** · **per-stop speed schedule** · **GPX import** · **saved routes** · **several phones at once** · **Wi-Fi connection** · **auto-reconnect** · **disk-image warning** · dark mode · phone-friendly layout.
 
 ## Quick start
 
@@ -94,9 +94,23 @@ The bar at the bottom always shows what the phone is doing, with **Stop moving**
 
 * **📍 Place**: click the map or search to drop a pin (drag it to fine-tune), then **Set location**.
 * **🚶 Move**: pick **Straight line**, **Walking** or **Driving** (the last two follow real roads from OpenStreetMap and are
-  drawn on the map), set the speed (changeable while moving) and either go to **one destination** (the pin) or build a
-  **multi-stop route**: move the pin, press **Add pin as stop**, repeat; reorder with the arrows; optionally set a pause at
-  each stop and **Loop**. You must set a starting location first.
+  drawn on the map) and set the speed (changeable while moving). Then choose a destination type:
+  * **One**: go to the pin.
+  * **Multi-stop**: move the pin, press **Add pin as stop**, repeat; reorder with the arrows; optionally set a pause at each stop
+    and **Loop**. **Speed schedule:** each stop can have its own path type and speed for the leg that ends there (walk to the car,
+    then drive); blank means "use the slider".
+  * **GPX file**: choose a `.gpx` track (from a running/hiking/maps app). It is drawn on the map and replayed exactly. Optionally
+    jump to the track's start, or press **Use recorded pace** to use the speed it was recorded at.
+  **Return to start when finished** adds a leg back to where the trip began; **↩ Return now** does the same after a trip.
+  **💾 Save route** keeps a multi-stop route or a GPX track (see Saved). You must set a starting location first (or let a
+  GPX/saved route jump to its start).
+* **Realism switches** (Move tab, all off by default, saved between runs, apply live):
+  * **GPS noise**: a few metres of smooth drift on every position, also while standing still.
+  * **Natural walking**: the pace wanders a little and eases off before sharp corners.
+  * **Traffic stops**: driving routes pause for a few seconds at some junctions (more likely at sharp turns), like traffic lights.
+    These are simulated from the route's shape, not from real traffic-light data.
+  * **Jump cooldown timer**: after a location jump of 1 km or more, shows roughly how long a real trip would have taken.
+  Not possible with this method: compass **heading** and **altitude** (the location service only accepts latitude/longitude).
 * **🎃 Trick or treat**: while this tab is open (and while a trick-or-treat walk is running) the app turns orange and shows a
   "Trick-or-treat mode" banner.
   1. **Draw area**: click points on the map around the neighborhood you want and click the first point again (or press
@@ -105,7 +119,12 @@ The bar at the bottom always shows what the phone is doing, with **Stop moving**
   2. **Find houses**: 🎃 pumpkins appear for real houses from OpenStreetMap inside your area, ordered into a house-to-house tour.
   3. **Start**: the phone jumps to the first house, walks street to street at about 4.5 km/h with natural speed variation, and
      pauses 20-120 s at every door. **Stop moving** ends it, leaving the phone where it is.
-* **★ Saved**: **Favorites** take a name plus a place name, coordinates like `48.8584, 2.2945`, or nothing (saves the
+  Options (switches on the tab, saved between runs): **Group of kids** (3.2 km/h and 1.6x longer pauses), **Avoid busy roads**
+  (houses within 20 m of a motorway/trunk/primary/secondary road are skipped and the tour never crosses one, so it ends early
+  instead; needs road data from OpenStreetMap or a saved offline area, otherwise you get a note), and **Realistic houses** (about
+  15% of houses have their lights off and are skipped, shown as 🌑; about 15% become a long chat at the door). Changing an option
+  after **Find houses** asks you to press it again.
+* **★ Saved**: **Saved routes** (▶ runs one, ✎ loads it into the editor, ✕ deletes it), **Favorites** take a name plus a place name, coordinates like `48.8584, 2.2945`, or nothing (saves the
   current pin). Click one to move the pin there, **＋** adds it as a stop. **Recent** keeps your last 15 locations (each Set
   location and finished route); **★** promotes one to a favorite.
 * **⬇️ Offline**: while you have internet, zoom the map so a neighborhood fills the screen (up to about 2.4 × 2.4 km), name it
@@ -118,7 +137,15 @@ The bar at the bottom always shows what the phone is doing, with **Stop moving**
   no data at all (a "No internet" note appears at the top). Typical size is 3-6 MB per area. To use trick-or-treat offline,
   download the area first, then draw/pin inside it. Offline routing is a simplified router: a short gap in the street data
   (up to 200 m) becomes a straight hop, anything longer reports an error. Straight line mode never needs any data.
-* Files `favorites.json`, `recent.json` and the `offline/` folder live next to `app.py` and are ignored by git.
+* **📱 Phones & connection** (click the phone chip at the top): lists every iPhone the app can see with a **🔌 USB** or **📶 Wi-Fi**
+  badge. Click one to control it; each phone keeps its own location and trips, and several can run at once (the others show as grey
+  dots on the map). **Auto-reconnect** (on by default): if the cable or Wi-Fi drops, a trip pauses ("📡 Reconnecting…"), and when the
+  phone is back the fake location is restored and the trip continues; if it does not come back within 10 minutes the trip stops.
+  An unplugged iOS 16-or-earlier phone simply keeps its fake location on its own.
+* **Disk image warning**: a blue notice appears if the phone's Developer Disk Image is not mounted (for example after an iOS update or a
+  restart), telling you to connect to the internet once and press Set location so it is mounted again.
+* Files `favorites.json`, `recent.json`, `settings.json`, `routes.json`, `devices.json` and the `offline/` folder live next to `app.py`
+  and are ignored by git.
 
 Notes on the online services: place search (Nominatim), road routing (the free OSM-community OSRM servers at
 routing.openstreetmap.de) and house lookup (Overpass API) are free public services with fair-use limits. The app sends a
@@ -128,6 +155,23 @@ offline. Large location jumps followed by fast movement are how some apps detect
 
 Command-line options: `python app.py --port 8000 --tunnel auto -v` (`-v` = debug logging). The server binds to
 127.0.0.1 only and has no authentication — don't expose it to a network.
+
+## Wi-Fi (no cable)
+
+1. Plug the iPhone in **once**, tap Trust, turn on Developer Mode.
+2. In **Phones & connection**, switch on **Allow connecting over Wi-Fi** (this changes a setting on the phone and needs the cable).
+3. Put the Mac and iPhone on the **same Wi-Fi network** and keep the iPhone awake and unlocked.
+4. Unplug. Within a few seconds the phone shows a **📶 Wi-Fi** badge. If it does not, press **Find Wi-Fi phones** (a Bonjour scan, about
+   5 seconds; it needs the phone to have been trusted by this app or Finder before). On a Mac you may also need Finder → your iPhone →
+   *Show this iPhone when on Wi-Fi*.
+
+How it works: the phone is found through usbmuxd's network list, or through a Bonjour scan. The app then uses the same location
+method as with a cable. **Wi-Fi is the least-tested part of this project** (it was written against the library's documented
+APIs and unit-tested with mocks, but not run against a real phone) and it can be less reliable than a cable. iOS 17.0-17.3 over
+Wi-Fi may need `tunneld` (see above). If Wi-Fi misbehaves, use the cable.
+
+**Several iOS 17+ phones at once:** the built-in no-root tunnel supports only **one** iOS 17+ phone per app. For two or more, start
+`tunneld` (`sudo .venv/bin/python -m pymobiledevice3 remote tunneld`); phones on iOS 16 or earlier have no such limit.
 
 ## Troubleshooting
 
@@ -144,6 +188,10 @@ Command-line options: `python app.py --port 8000 --tunnel auto -v` (`-v` = debug
 | "Could not get a road route" / "No route" | The routing service is down, or the points aren't connected by roads. Try again, or use Straight line. |
 | "Could not look up houses" / "Found only N houses" | The Overpass service is busy (wait a minute), or draw a bigger area over a residential neighborhood (OpenStreetMap needs houses mapped there). |
 | "That area is too big" | Draw a smaller area (max 4 km²). |
+| Phone shows "not connected" | The cable or Wi-Fi dropped. With Auto-reconnect on, just reconnect it; the trip and fake location resume by themselves. |
+| Phone not listed over Wi-Fi | Follow the Wi-Fi steps above; press **Find Wi-Fi phones**; same network; phone awake. Use the cable if it still fails. |
+| "Only one iOS 17+ iPhone can use the built-in tunnel" | Start `tunneld` (see Wi-Fi section) to control several iOS 17+ phones. |
+| Blue "Developer Disk Image is not mounted" notice | Be online once, press Set location; the app mounts it. |
 | Search says "rate-limiting" or "offline" | Nominatim allows ~1 request/second and needs internet. Wait a moment. |
 | Map is grey | OpenStreetMap tiles need internet, or a saved offline area covering this spot (Offline tab). Zooming past level 17 offline shows blank tiles. |
 | "That area is too big" (Offline tab) | Zoom the map in until the neighborhood fills the screen (limit about 6 km²). |
@@ -172,6 +220,13 @@ locspoof/routing.py    road routing (OSRM) with per-leg geometry
 locspoof/trickortreat.py house lookup (Overpass) and tour planning
 locspoof/recents.py    recent locations store
 locspoof/offline.py    offline packs: tiles + houses + streets, local A* router, downloader
+locspoof/realism.py    GPS noise, natural pace, traffic stops, jump cooldown
+locspoof/settings.py   the on/off switches (settings.json)
+locspoof/gpx.py        GPX import
+locspoof/routes.py     saved routes
+locspoof/busy.py       busy-road geometry for trick-or-treat
+locspoof/fleet.py      one manager per phone
+locspoof/memory.py     last-seen iOS version per phone (for the disk-image notice)
 locspoof/geocode.py    Nominatim client (User-Agent, rate limit, cache)
 locspoof/favorites.py  JSON favorites store
 locspoof/movement.py   great-circle math

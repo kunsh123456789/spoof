@@ -16,6 +16,8 @@ log = logging.getLogger("locspoof.favorites")
 
 
 class FavoritesStore:
+    required = {"id", "name", "lat", "lon"}
+
     def __init__(self, path: Path):
         self.path = Path(path)
         self._lock = threading.Lock()
@@ -51,7 +53,7 @@ class FavoritesStore:
     def _read(self) -> list[dict]:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            return [i for i in data if {"id", "name", "lat", "lon"} <= i.keys()]
+            return [i for i in data if self.required <= i.keys()]
         except FileNotFoundError:
             return []
         except (json.JSONDecodeError, TypeError, AttributeError):

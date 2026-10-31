@@ -15,8 +15,11 @@ class FakeSession:
         self.calls: list = []
         self.closed = False
         self.fail_next = False
+        self.broken = False
 
     async def set(self, lat, lon):
+        if self.broken:
+            raise ConnectionResetError("cable pulled")
         if self.fail_next:
             self.fail_next = False
             raise ConnectionResetError("stale")
@@ -32,11 +35,14 @@ class FakeSession:
 class FakeBackend:
     """Stands in for a phone. `problem` selects which friendly error probe() raises."""
 
-    def __init__(self, version="17.4", problem=None):
-        self.info = DeviceInfo("00008110-TEST", "Test iPhone", version, "iPhone14,5")
+    def __init__(self, version="17.4", problem=None, udid="00008110-TEST", name="Test iPhone", connection="USB"):
+        self.info = DeviceInfo(udid, name, version, "iPhone14,5", connection=connection, wifi_enabled=False, ddi_mounted=True)
         self.problem = problem
         self.sessions: list[FakeSession] = []
         self.trusted = 0
+        self.wifi_calls: list[bool] = []
+        self.scans = 0
+        self.scan_result: list[dict] = []
 
     async def probe(self):
         if self.problem:
@@ -47,10 +53,43 @@ class FakeBackend:
         self.trusted += 1
         self.problem = None
 
+    async def set_wifi(self, enabled):
+        if self.info.connection != "USB":
+            from locspoof.errors import AppError
+            raise AppError("wifi_needs_usb", "Plug the iPhone in with a cable.", status=409)
+        self.wifi_calls.append(enabled)
+        self.info.wifi_enabled = enabled
+
+    async def list_devices(self):
+        if self.problem == "no_device":
+            return []
+        i = self.info
+        return [{"udid": i.udid, "name": i.name, "ios_version": i.ios_version, "connection": i.connection, "paired": True}]
+
+    async def scan_wifi(self, timeout=5.0):
+        self.scans += 1
+        return self.scan_result
+
+    def unplug(self):
+        """Simulate pulling the cable: existing sessions die, probes say no device."""
+        self.problem = "no_device"
+        for s in self.sessions:
+            s.broken = True
+
+    def replug(self):
+        self.problem = None
+
     async def open_session(self, info):
         s = FakeSession(persists=info.major < 17)
         self.sessions.append(s)
         return s
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path, monkeypatch):
+    """Default data files (settings.json, routes.json, favorites.json, offline/...) must never touch the repo."""
+    import locspoof.server as server
+    monkeypatch.setattr(server, "ROOT", tmp_path / "default-data")
 
 
 @pytest.fixture
@@ -75,7 +114,9 @@ class FakeRouter:
 class FakeHouses:
     def __init__(self):
         self.calls: list = []
+        self.last_notes: list = []
 
-    async def plan(self, lat, lon, radius_m, count, rng=None, polygon=None):
+    async def plan(self, lat, lon, radius_m, count, rng=None, polygon=None, **opts):
         self.calls.append((lat, lon, radius_m, count) if polygon is None else (lat, lon, radius_m, count, polygon))
-        return [{"lat": lat + i * 0.0001, "lon": lon, "dwell_s": 0.02} for i in range(min(count, 5))]
+        self.opts = opts
+        return [{"lat": lat + i * 0.0001, "lon": lon, "dwell_s": 0.02, "lights_off": False} for i in range(min(count, 5))]
