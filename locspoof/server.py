@@ -24,7 +24,7 @@ from .gpx import MAX_BYTES as GPX_MAX_BYTES, parse_gpx
 from .geocode import Geocoder
 import httpx
 
-from .movement import offset_point, haversine_m, point_in_polygon, polygon_area_m2, polygon_centroid, validate_coords
+from .movement import haversine_m, point_in_polygon, polygon_area_m2, polygon_centroid, validate_coords
 from .offline import PNG_SIGNATURE, OfflineDownloader, OfflineStore, fetch_tile, is_png
 from .recents import RecentsStore
 from .routes import RoutesStore
@@ -126,12 +126,6 @@ class ScheduleRequest(BaseModel):
 
 class ArmRequest(BaseModel):
     armed: bool
-
-
-class StepRequest(BaseModel):
-    heading_deg: float = Field(ge=0, le=360)
-    speed_kmh: float = Field(gt=0, le=60)
-    seconds: float = Field(default=1.0, gt=0, le=3)
 
 
 class PanicRequest(BaseModel):
@@ -715,7 +709,7 @@ def create_app(
             await asyncio.to_thread(remote_apply)
         return out
 
-    # ---- phone remote (managed from this Mac; the phone only pairs, asks who it is, and sends joystick steps) ----
+    # ---- phone remote (managed from this Mac; the phone only pairs, and asks who it is) ----
     @app.get("/api/remote")
     async def remote_state():
         port = int(settings.data.get("remote_port", 8787))
@@ -745,15 +739,6 @@ def create_app(
     @app.get("/api/remote/me")
     async def remote_me():
         return {"ok": True}
-
-    @app.post("/api/remote/step")
-    async def remote_step(body: StepRequest, manager: DeviceManager = Depends(get_manager)):
-        """The phone's joystick: move the fake location a little in a compass direction (sent about once a second while held)."""
-        sim = manager._sim_state()["simulation"]
-        if not sim["active"]:
-            raise AppError("no_start", "Set a starting location first.", "Pick a place on the map and press Set location, then use the pad.", 409)
-        lat, lon = offset_point(sim["lat"], sim["lon"], body.heading_deg, body.speed_kmh / 3.6 * body.seconds)
-        return await manager.set_location(lat, lon, None, quiet=True)
 
     @app.get("/remote")
     async def remote_page():

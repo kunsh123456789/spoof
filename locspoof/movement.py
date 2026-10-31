@@ -137,11 +137,3 @@ def point_in_polygon(lat: float, lon: float, poly: Polygon) -> bool:
 def polygon_centroid(poly: Polygon) -> tuple[float, float]:
     return sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly)
 
-
-def offset_point(lat: float, lon: float, heading_deg: float, distance_m: float) -> tuple[float, float]:
-    """The spot ``distance_m`` metres from (lat, lon) in the compass direction ``heading_deg`` (0 = north, 90 = east)."""
-    d, h = distance_m / EARTH_RADIUS_M, math.radians(heading_deg)
-    p1, l1 = math.radians(lat), math.radians(lon)
-    p2 = math.asin(math.sin(p1) * math.cos(d) + math.cos(p1) * math.sin(d) * math.cos(h))
-    l2 = l1 + math.atan2(math.sin(h) * math.sin(d) * math.cos(p1), math.cos(d) - math.sin(p1) * math.sin(p2))
-    return max(-90.0, min(90.0, math.degrees(p2))), (math.degrees(l2) + 540) % 360 - 180

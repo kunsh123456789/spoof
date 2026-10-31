@@ -38,13 +38,6 @@ h3 { margin: 16px 2px 6px; font-size: 13px; text-transform: uppercase; letter-sp
 .pane { display: grid; gap: 10px; }
 .hint { margin: 0; color: var(--muted); font-size: 13.5px; }
 .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; } .row3 button { padding: 11px 6px; font-size: 14px; }
-#stickwrap { display: flex; gap: 14px; align-items: center; }
-#stick { position: relative; width: 168px; height: 168px; border-radius: 50%; flex: none; touch-action: none; user-select: none; -webkit-user-select: none;
-  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 14%, var(--bg)), var(--bg)); border: 2px solid var(--border); }
-#stick::before, #stick::after { content: ""; position: absolute; background: var(--border); } #stick::before { left: 50%; top: 10px; bottom: 10px; width: 2px; } #stick::after { top: 50%; left: 10px; right: 10px; height: 2px; }
-#knob { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%; background: var(--accent); box-shadow: 0 4px 14px rgba(0,0,0,.35); transition: transform .12s; }
-#stick.active #knob { transition: none; }
-.side { flex: 1; min-width: 0; display: grid; gap: 8px; }
 label { display: grid; gap: 6px; font-size: 14px; } label b { font-variant-numeric: tabular-nums; }
 input[type="range"] { width: 100%; accent-color: var(--accent); }
 .seg { display: flex; gap: 6px; } .seg button { flex: 1; font-size: 14px; padding: 10px 4px; } .seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }

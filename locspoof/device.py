@@ -927,7 +927,7 @@ class DeviceManager:
         self._position_label, self._position_since = (label or None), time.time()
         self._remember_sim(force=True)
         self._ensure_ambient()
-        if not quiet:                                         # (the phone's joystick moves once a second: no log line each time)
+        if not quiet:                                         # (for callers that move the location very often)
             self._note("Location set to %s" % (label or "%.5f, %.5f" % (lat, lon)), kind="location")
         log.info("location set to %.6f, %.6f", lat, lon)
         self._status_cache = None

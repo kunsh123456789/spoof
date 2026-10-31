@@ -60,7 +60,7 @@ This creates `~/Applications/iPhone Location.app` (with its own icon, no Termina
 
 ## Phone remote (control it from your iPhone)
 
-Use your iPhone as a remote control for the Mac app: a map, place search, favorites, a **joystick**, trips, saved routes and a big **🚨 panic** button.
+Use your iPhone as a remote control for the Mac app: a map, place search, favorites, trips, saved routes and a big **🚨 panic** button.
 It talks to the app on the Mac over your **home Wi-Fi** (both devices on the same network).
 
 1. On the Mac: **⚙ Settings → Phone remote → Control this app from my iPhone**. macOS may ask *"Do you want the application python to accept
@@ -69,8 +69,7 @@ It talks to the app on the Mac over your **home Wi-Fi** (both devices on the sam
 3. On the Mac press **New pairing code**, and type the 6 digits on the iPhone. This is done once per phone.
 4. In Safari: **Share → Add to Home Screen**. You now have an app icon that opens the remote full-screen.
 
-The remote has three tabs: **Pad** (drag the stick to walk in any direction; further = faster, with a top-speed slider; Stop / Back to start / Real GPS),
-**Places** (search, tap the map, favorites, recents, **Set location here**) and **Trip** (walk, drive or straight line to the pin; run saved routes).
+The remote has two tabs: **Places** (search, tap the map, favorites, recents, **Set location here**) and **Trip** (walk, drive or straight line to the pin; run saved routes; Stop / Back to start / Real GPS).
 If several iPhones are connected there is a phone picker at the top. The top bar always shows what the iPhone is doing and how far along a trip is.
 
 **Safety:** it is **off by default**. The normal app stays reachable from this Mac only; switching the remote on opens a *second* port (8787) on

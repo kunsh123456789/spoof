@@ -80,32 +80,8 @@
   async function poll() {
     clearTimeout(pollTimer);
     try { render(await api("GET", "/api/status", undefined, { timeout: 8000 })); } catch (e) { if (e.unauth) return; $("rtitle").textContent = "Can't reach the Mac"; $("rsub").textContent = e.hint || ""; $("rdot").className = "dot bad"; }
-    pollTimer = setTimeout(poll, status?.walk?.active || stickActive ? 1000 : 2500);
+    pollTimer = setTimeout(poll, status?.walk?.active ? 1000 : 2500);
   }
-
-  // ---------- the joystick: sends "move this way at this speed" about once a second ----------
-  let stickActive = false, vec = { x: 0, y: 0 }, stepTimer = null, sending = false;
-  const stick = $("stick"), knob = $("knob");
-  function stickPos(e) {
-    const r = stick.getBoundingClientRect(), R = r.width / 2 - 32;
-    let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2); const d = Math.hypot(dx, dy);
-    if (d > R) { dx = dx / d * R; dy = dy / d * R; }
-    vec = { x: dx / R, y: dy / R }; knob.style.transform = `translate(${dx}px, ${dy}px)`;
-  }
-  async function sendStep() {
-    const m = Math.hypot(vec.x, vec.y); if (m < 0.12 || sending) return;
-    sending = true;
-    try {
-      const heading = (Math.atan2(vec.x, -vec.y) * 180 / Math.PI + 360) % 360, speed = Math.max(0.5, Number($("padSpeed").value) * Math.min(1, m));
-      render(await api("POST", "/api/remote/step", { heading_deg: heading, speed_kmh: speed, seconds: 1 }, { timeout: 6000 }));
-    } catch (e) { toast(e.message + (e.hint ? " " + e.hint : ""), 4000); endStick(); }
-    sending = false;
-  }
-  function endStick() { stickActive = false; stick.classList.remove("active"); vec = { x: 0, y: 0 }; knob.style.transform = ""; clearInterval(stepTimer); stepTimer = null; }
-  stick.addEventListener("pointerdown", (e) => { stick.setPointerCapture(e.pointerId); stickActive = true; following = true; stick.classList.add("active"); stickPos(e); sendStep(); stepTimer = setInterval(sendStep, 1000); });
-  stick.addEventListener("pointermove", (e) => { if (stickActive) stickPos(e); });
-  for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) stick.addEventListener(ev, endStick);
-  $("padSpeed").oninput = () => ($("padSpeedOut").textContent = $("padSpeed").value);
 
   // ---------- buttons ----------
   $("stopBtn").onclick = (e) => act(e.currentTarget, async () => { await api("DELETE", "/api/journey"); toast("Stopped. The iPhone stays where it is."); });
@@ -120,7 +96,7 @@
     if (!pin) throw { message: "Tap the map (or pick a place) first." };
     const { lat, lng } = pin.getLatLng(), jump = !status?.simulation?.active;
     await api("POST", "/api/journey", { stops: [{ lat, lon: lng, label: pinLabel }], mode, speed_kmh: Number($("tripSpeed").value), jump_to_first: false });
-    following = true; toast(`Heading to ${pinLabel || "the pin"}…`);
+    toast(`Heading to ${pinLabel || "the pin"}…`);
   });
   document.querySelectorAll("#modeSeg button").forEach((b) => (b.onclick = () => { mode = b.dataset.m; document.querySelectorAll("#modeSeg button").forEach((x) => x.classList.toggle("on", x === b)); }));
   $("tripSpeed").oninput = () => ($("tripSpeedOut").textContent = $("tripSpeed").value);
@@ -141,7 +117,7 @@
       const place = (p) => li(p.name || `${fmt4(p.lat)}, ${fmt4(p.lon)}`, () => setPin(p.lat, p.lon, p.name || null, true));
       $("favs").replaceChildren(...(favorites.length ? favorites.map(place) : [Object.assign(li("No favorites yet (add them on the Mac)."), { className: "empty" })]));
       $("recent").replaceChildren(...(recent.length ? recent.map(place) : [Object.assign(li("Nothing yet."), { className: "empty" })]));
-      $("routes").replaceChildren(...(routes.length ? routes.map((r) => li(r.name, null, Object.assign(document.createElement("button"), { textContent: "▶", onclick: () => act(null, async () => { await api("POST", `/api/routes/${r.id}/start`, { jump_to_first: !status?.simulation?.active }); following = true; toast(`Running “${r.name}”…`); }) }))) : [Object.assign(li("No saved routes yet (save them on the Mac)."), { className: "empty" })]));
+      $("routes").replaceChildren(...(routes.length ? routes.map((r) => li(r.name, null, Object.assign(document.createElement("button"), { textContent: "▶", onclick: () => act(null, async () => { await api("POST", `/api/routes/${r.id}/start`, { jump_to_first: !status?.simulation?.active }); toast(`Running “${r.name}”…`); }) }))) : [Object.assign(li("No saved routes yet (save them on the Mac)."), { className: "empty" })]));
     } catch (e) { fail(e); }
   }
 

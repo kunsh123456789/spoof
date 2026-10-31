@@ -1,4 +1,4 @@
-"""The phone remote: pairing, the network guard, the joystick, and the Mac-side management."""
+"""The phone remote: pairing, the network guard, and the Mac-side management."""
 import random
 import time
 
@@ -6,7 +6,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import FakeBackend, FakeHouses, FakeRouter
-from locspoof.movement import haversine_m, offset_point
 from locspoof.remote import RemoteStore, check_request
 from locspoof.server import create_app
 
@@ -164,34 +163,9 @@ def test_only_a_hash_of_the_token_is_stored(mac):
     assert h["Authorization"][7:] not in (mac.tmp / "rem.json").read_text()
 
 
-# ---- the joystick ----
-def test_the_pad_moves_the_location_in_the_chosen_direction(mac):
-    p = phone(mac)
-    h = pair(mac, p)
-    assert p.post("/api/remote/step", json={"heading_deg": 90, "speed_kmh": 10}, headers=h).json()["error"]["code"] == "no_start"
-    p.post("/api/location", json={"lat": 37.0, "lon": -120.0}, headers=h)
-    r = p.post("/api/remote/step", json={"heading_deg": 0, "speed_kmh": 36, "seconds": 1}, headers=h)          # 10 m north
-    assert r.status_code == 200
-    sim = p.get("/api/status", headers=h).json()["simulation"]
-    assert sim["lat"] > 37.0 and sim["lon"] == pytest.approx(-120.0, abs=1e-6) and haversine_m(37.0, -120.0, sim["lat"], sim["lon"]) == pytest.approx(10, abs=0.5)
-    p.post("/api/remote/step", json={"heading_deg": 90, "speed_kmh": 36, "seconds": 2}, headers=h)             # then 20 m east
-    sim2 = p.get("/api/status", headers=h).json()["simulation"]
-    assert sim2["lon"] > -120.0 and haversine_m(sim["lat"], sim["lon"], sim2["lat"], sim2["lon"]) == pytest.approx(20, abs=0.6)
-    texts = [e["text"] for e in mac.get("/api/activity").json()["events"]]
-    assert sum("Location set" in t for t in texts) == 1                        # the pad does not spam the activity log
-    for bad in ({"heading_deg": 400, "speed_kmh": 5}, {"heading_deg": 0, "speed_kmh": 0}, {"heading_deg": 0, "speed_kmh": 500}, {"heading_deg": 0, "speed_kmh": 5, "seconds": 99}):
-        assert p.post("/api/remote/step", json=bad, headers=h).status_code == 422
-
-
-def test_offset_point_math():
-    assert offset_point(10, 20, 0, 1000)[0] == pytest.approx(10 + 1000 / 111195, abs=1e-5)
-    la, lo = offset_point(10, 20, 270, 5000)
-    assert la == pytest.approx(10, abs=1e-3) and lo < 20 and haversine_m(10, 20, la, lo) == pytest.approx(5000, abs=1)
-    assert -180 <= offset_point(0, 179.9999, 90, 5000)[1] <= 180
-
-
 def test_check_request_pure(tmp_path):
     s = RemoteStore(tmp_path / "x.json")
     assert check_request(s, "GET", "/remote", "", "") is None
     assert check_request(s, "GET", "/api/status", "", "")[0] == 401
-    assert check_request(s, "GET", "/static/app.js", "", "")[0] == 401           # the full Mac UI is not served to the network
+    assert check_request(s, "GET", "/static/app.js", "", "")[0] == 401
+    assert check_request(s, "POST", "/api/remote/step", "", "")[0] == 401           # the full Mac UI is not served to the network

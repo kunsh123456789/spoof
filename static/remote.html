@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="/static/icon.png">
   <link rel="icon" href="/static/icon.png">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/remote.css?v=1">
+  <link rel="stylesheet" href="/static/remote.css?v=2">
 </head>
 <body>
   <!-- first time: pair with the Mac -->
@@ -41,25 +41,10 @@
 
     <section id="sheet">
       <nav id="rtabs" role="tablist">
-        <button data-p="pad" class="on">🕹 Pad</button><button data-p="places">📍 Places</button><button data-p="trip">🚶 Trip</button>
+        <button data-p="places" class="on">📍 Places</button><button data-p="trip">🚶 Trip</button>
       </nav>
 
-      <div class="pane" id="p-pad">
-        <div id="stickwrap">
-          <div id="stick" aria-label="Joystick: drag to walk"><div id="knob"></div></div>
-          <div class="side">
-            <label>Top speed <b><output id="padSpeedOut">6</output> km/h</b><input id="padSpeed" type="range" min="1" max="40" value="6"></label>
-            <p id="padHint" class="hint">Drag the stick. Further = faster. Let go to stand still.</p>
-          </div>
-        </div>
-        <div class="row3">
-          <button id="stopBtn" class="sec">⏹ Stop</button>
-          <button id="returnBtn" class="sec">↩ Back to start</button>
-          <button id="restoreBtn" class="danger">Real GPS</button>
-        </div>
-      </div>
-
-      <div class="pane" id="p-places" hidden>
+      <div class="pane" id="p-places">
         <form id="searchForm"><input id="q" type="search" placeholder="Search a place or address" autocomplete="off" aria-label="Search"><button class="sec">Search</button></form>
         <ul id="results" class="list" hidden></ul>
         <p id="pinInfo" class="hint">Tap the map to drop a pin.</p>
@@ -72,6 +57,11 @@
         <div class="seg" id="modeSeg"><button data-m="walk" class="on">🚶 Walk</button><button data-m="drive">🚗 Drive</button><button data-m="straight">➡️ Straight</button></div>
         <label class="slider">Speed <b><output id="tripSpeedOut">5</output> km/h</b><input id="tripSpeed" type="range" min="1" max="120" value="5"></label>
         <button id="goBtn" class="big">▶ Go to the pin</button>
+        <div class="row3">
+          <button id="stopBtn" class="sec">⏹ Stop</button>
+          <button id="returnBtn" class="sec">↩ Back to start</button>
+          <button id="restoreBtn" class="danger">Real GPS</button>
+        </div>
         <h3>Saved routes</h3><ul id="routes" class="list"></ul>
       </div>
     </section>
@@ -79,6 +69,6 @@
   </div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/remote.js?v=1"></script>
+  <script src="/static/remote.js?v=2"></script>
 </body>
 </html>
