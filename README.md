@@ -237,7 +237,7 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
   current pin). Click one to move the pin there, **＋** adds it as a stop. **Recent** keeps your last 15 locations (each Set
   location and finished route); **★** promotes one to a favorite.
 * **⬇️ Offline**: while you have internet, zoom the map so a neighborhood fills the **light-green box** (up to about 2.4 × 2.4 km; the box is
-  exactly what gets saved, and turns orange if it is too big), name it
+  exactly what gets saved. If it is too big the box turns orange and the button says **🔍 Too big: press to zoom in**; press it (or zoom the map) until it says **⬇ Download what I see**), name it
   and press **Download what I see**. The app saves, into the `offline/` folder next to `app.py`:
   * the **map tiles** (zoom 12-17),
   * the **houses** (for trick-or-treat "Find houses"), and

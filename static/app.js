@@ -777,6 +777,12 @@
     const nw = map.containerPointToLatLng([r.left, r.top]), se = map.containerPointToLatLng([r.right, r.bottom]);
     return { south: se.lat, west: nw.lng, north: nw.lat, east: se.lng };
   }
+  // The button always does something: "zoom in" while the box is too big, "download" once it fits.
+  function setOffMode(m) {
+    const b = $("offBtn"); b.dataset.mode = m; b.disabled = m === "blocked" || offBusy;
+    b.textContent = m === "zoom" ? "🔍 Too big: press to zoom in" : "⬇ Download what I see";
+    $("captureLabel").textContent = m === "zoom" ? "Too big — zoom in" : "Will be saved";
+  }
   function updateCapture(bad = false) {
     const box = $("captureBox"), r = captureRect(), show = tab === "offline" && r.right - r.left >= 80 && r.bottom - r.top >= 80;
     box.hidden = !show; if (!show) return;
@@ -791,8 +797,8 @@
     if (tab !== "offline" || offPoll) return;
     try {
       const e = await api("POST", "/api/offline/estimate", { name: "x", bbox: viewBBox() });
-      $("offEstimate").textContent = `📐 ${e.area_km2} km² inside the green box · ${e.tiles} map tiles · about ${e.est_mb} MB`; $("offBtn").disabled = false; captureBad = false;
-    } catch (e) { $("offEstimate").textContent = `⚠️ ${e.message} ${e.hint || ""}`; $("offBtn").disabled = true; captureBad = true; }
+      $("offEstimate").textContent = `📐 ${e.area_km2} km² inside the green box · ${e.tiles} map tiles · about ${e.est_mb} MB`; setOffMode("download"); captureBad = false;
+    } catch (e) { $("offEstimate").textContent = `⚠️ ${e.message} ${e.hint || ""}`; captureBad = true; setOffMode(e.code === "area_too_big" || /too big/i.test(e.message || "") ? "zoom" : "blocked"); }
     updateCapture(captureBad);
   }
   map.on("moveend", () => { if (tab === "offline") scheduleEstimate(); });
@@ -832,6 +838,7 @@
     else if (!offBusy) box.hidden = true;
   }
   $("offBtn").onclick = (ev) => guarded(ev.currentTarget, async () => {
+    if ($("offBtn").dataset.mode === "zoom") { map.zoomIn(); scheduleEstimate(); return; }
     const name = $("offName").value.trim();
     if (!name) throw { message: "Give this area a name.", hint: "For example “Maple Street”." };
     await api("POST", "/api/offline", { name, bbox: viewBBox() });
