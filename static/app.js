@@ -129,6 +129,7 @@
   function centreOnPhone() {
     const sim = status?.simulation;
     if (sim?.active) map.flyTo([sim.lat, sim.lon], Math.max(map.getZoom(), 16), { duration: 0.8 });
+    else if (realLoc && settings.show_real_location !== false) map.flyTo([realLoc.lat, realLoc.lon], Math.max(map.getZoom(), realLoc.source === "ip" ? 11 : 16), { duration: 0.8 });
     else if (pin) map.flyTo(pin.getLatLng(), Math.max(map.getZoom(), 16), { duration: 0.8 });
     else toast("The phone is not simulating a location yet.");
   }
@@ -220,6 +221,7 @@
     try {
       settings = await api("PATCH", "/api/settings", { [key]: cb.checked });
       if (key === "remote_enabled") loadRemote();
+      if (key === "show_real_location") refreshReal(true);
       if (key === "california_only") { applyCalifornia(); toast(cb.checked ? "The map is now limited to California." : "The whole world is available again."); }
       if (SETTING_NEEDS_REPLAN.has(key) && houses.length) { clearHouses(); toast("Option changed — press “Find houses” again to apply it."); }
     } catch (e) { cb.checked = !cb.checked; fail(e); }
@@ -1247,6 +1249,7 @@
   function nowBar(s) {
     const w = s.walk || {}, sim = s.simulation || { active: false }, tot = w.kind === "trick_or_treat", dev = s.device;
     let state = "idle", icon = "🛰", title = "Using your real location", step = "", detail = dev ? `${dev.name} · iOS ${dev.ios_version} · your phone is using its real GPS.` : "Your phone is using its real GPS.", pct = null, eta = null;
+    if (!sim.active && s.state === "ready" && realLoc && settings.show_real_location !== false) detail = `${dev ? dev.name + " · " : ""}real GPS · 📍 Mac's location: ${realText()}`;
     const speed = (w.cur_speed_kmh ?? w.speed_kmh ?? 0).toFixed(1);
     const coords = sim.active ? `${fmt4(sim.lat)}, ${fmt4(sim.lon)}` : "";
     const place = sim.active ? (sim.label || labelFor(sim.lat, sim.lon) || (w.active ? null : (reverseLabel(sim.lat, sim.lon).then((l) => l && status && nowBar(status)), null))) : null;
@@ -1294,8 +1297,38 @@
     if (awakeInfo?.active) $("awakeChip").title = `The Mac is being kept awake: ${awakeInfo.reasons.join(", ")}`;
     document.dispatchEvent(new CustomEvent("locspoof:status", { detail: { status: s, state, awake: awakeInfo } }));
   }
+  // ---------- where the Mac (so roughly the iPhone) really is, shown while the phone is not being spoofed ----------
+  // iOS gives a computer no way to read the phone's real GPS, so this is the Mac's location: the Mac's own location service if it
+  // allows it in this window, else an approximate area from the internet address.
+  let realLoc = null, realMarker = null, realTimer = null, realBusy = false;
+  const realText = () => (realLoc ? `${realLoc.label ? realLoc.label + " · " : ""}${realLoc.source === "gps" ? `about ${Math.round(realLoc.acc || 0)} m` : "approximate (city level)"}` : "");
+  function drawReal() {
+    const show = settings.show_real_location !== false && realLoc && !status?.simulation?.active;
+    if (!show) { if (realMarker) { realMarker.remove(); realMarker = null; } return; }
+    const ll = [realLoc.lat, realLoc.lon];
+    if (!realMarker) { realMarker = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="real-dot"></div>', iconSize: [20, 20] }), interactive: false, keyboard: false, zIndexOffset: 3000 }).addTo(map); realMarker.bindTooltip("Where this Mac is (roughly where the iPhone really is)", { direction: "top" }); }
+    else realMarker.setLatLng(ll);
+    if (realLoc.source === "ip" && !realLoc.circle) { /* the dot is enough: no accuracy circle for a city-level guess */ }
+  }
+  async function refreshReal(force = false) {
+    clearTimeout(realTimer);
+    realTimer = setTimeout(refreshReal, 120000);
+    if (realBusy || settings.show_real_location === false || status?.simulation?.active) { drawReal(); return; }
+    if (realLoc && !force && Date.now() - realLoc.at < 60000) { drawReal(); return; }
+    realBusy = true;
+    try {
+      const gps = await new Promise((ok) => { if (!navigator.geolocation) return ok(null);
+        navigator.geolocation.getCurrentPosition((p) => ok({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, source: "gps" }), () => ok(null), { timeout: 8000, maximumAge: 120000 }); });
+      let loc = gps;
+      if (!loc) { try { const w = await api("GET", "/api/where", undefined, { timeout: 10000 }); if (w.ok) loc = { lat: w.lat, lon: w.lon, label: w.label, source: "ip" }; } catch { /* offline */ } }
+      if (loc) { const first = !realLoc; realLoc = { ...loc, at: Date.now(), label: loc.label || (realLoc && realLoc.label) || "" };
+        if (loc.source === "gps" && !loc.label) reverseLabel(loc.lat, loc.lon).then((l) => { if (l && realLoc) { realLoc.label = l; if (status) nowBar(status); } });
+        if (first && !pin && !status?.simulation?.active) map.setView([loc.lat, loc.lon], 13); }
+    } finally { realBusy = false; }
+    drawReal(); if (status) nowBar(status);
+  }
   const simIcon = (who) => L.divIcon({ className: "", html: `<div class="sim-marker"><span class="who">${who}</span></div>`, iconSize: [22, 22], iconAnchor: [11, 11] });
-  let lastMapTouch = 0;
+  let lastMapTouch = 0, lastSimActive = null;
   map.on("dragstart zoomstart", () => { lastMapTouch = Date.now(); });             // don't fight the user's own panning
   function render(s) {
     status = s;
@@ -1329,6 +1362,7 @@
       if (s.walk?.active && !map.getBounds().pad(-0.05).contains([sim.lat, sim.lon]) && Date.now() - lastMapTouch > 8000) map.panTo([sim.lat, sim.lon], { animate: true });
       if (!centeredOnSim) { centeredOnSim = true; if (!pin) map.setView([sim.lat, sim.lon], 13); }
     } else if (simMarker) { simMarker.remove(); simMarker = null; }
+    if (sim.active !== lastSimActive) { lastSimActive = sim.active; if (!sim.active) refreshReal(true); else drawReal(); }
     nowBar(s);
     const w = s.walk || {};
     if (!landed) { landed = true; if (w.active && w.kind === "trick_or_treat") showTab("tot"); }   // reopened mid-trip: land on the right tab, once
@@ -1512,7 +1546,7 @@
 
   (async function init() {
     try { settings = await api("GET", "/api/settings"); } catch { settings = {}; }
-    applySettings(); applyCalifornia();
+    applySettings(); applyCalifornia(); refreshReal(true);
     await loadDevices(); loadAwake();
     (function loop() { refresh().finally(() => setTimeout(loop, status?.walk?.active ? 1000 : 3000)); })();
   })();

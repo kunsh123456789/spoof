@@ -424,3 +424,38 @@ def test_a_long_tour_of_70_houses_can_start_and_return_to_the_pin(tmp_path):
             time.sleep(0.05)
         sim = c.get("/api/status").json()["simulation"]
         assert abs(sim["lat"] - 10.0) < 1e-4 and abs(sim["lon"] - 10.0) < 1e-4                # finished back at the pin
+
+
+# ---- real location when not spoofing ----
+def test_where_am_i_uses_the_ip_lookup_and_caches_it(tmp_path):
+    import asyncio
+    import httpx
+    from locspoof.locate import IpLocator
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(200, json={"success": True, "latitude": 37.77, "longitude": -122.42, "city": "San Francisco", "region": "California"})
+
+    loc = IpLocator(client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    r = asyncio.run(loc.where())
+    assert r == {"ok": True, "lat": 37.77, "lon": -122.42, "label": "San Francisco, California", "approximate": True}
+    asyncio.run(loc.where())
+    assert len(calls) == 1                                                          # cached
+    bad = IpLocator(client=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"success": False}))))
+    assert asyncio.run(bad.where()) == {"ok": False}
+    down = IpLocator(client=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: (_ for _ in ()).throw(httpx.ConnectError("offline")))))
+    assert asyncio.run(down.where()) == {"ok": False}
+
+
+def test_the_where_endpoint_and_setting(tmp_path):
+    class Fake:
+        async def where(self):
+            return {"ok": True, "lat": 1.0, "lon": 2.0, "label": "Somewhere", "approximate": True}
+    app = create_app(backend=FakeBackend(), router=FakeRouter(), house_finder=FakeHouses(), favorites_path=tmp_path / "f.json",
+                     recents_path=tmp_path / "r.json", offline_root=tmp_path / "o", settings_path=tmp_path / "s.json",
+                     routes_path=tmp_path / "rt.json", devices_path=tmp_path / "d.json", schedules_path=tmp_path / "sch.json",
+                     activity_path=tmp_path / "act.json", locator=Fake())
+    with TestClient(app) as c:
+        assert c.get("/api/settings").json()["show_real_location"] is True
+        assert c.get("/api/where").json()["label"] == "Somewhere"

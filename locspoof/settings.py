@@ -19,6 +19,7 @@ DEFAULTS: dict[str, bool] = {
     "traffic_stops": False,  # random stops at junctions on driving routes
     "cooldown_hint": False,  # show a "wait this long after a big jump" timer
     "remote_enabled": False,  # let a paired phone on the same Wi-Fi control this app (opens a second, protected listener)
+    "show_real_location": True, # when not spoofing, show where the Mac (so roughly the iPhone) really is
     "snap_pin": True,        # a dropped pin moves to the nearest road / path that makes sense
     "california_only": True,  # the map (and search) is limited to California
     # trick or treat

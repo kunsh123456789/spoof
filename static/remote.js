@@ -60,7 +60,7 @@
   const fmtDist = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
   const inText = (s) => (s < 60 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
   function render(s) {
-    status = s; const w = s.walk || {}, sim = s.simulation || {}; let title = "Using the real location", sub = s.device ? `${s.device.name} · real GPS` : "", pct = 0, dot = "ok";
+    status = s; const w = s.walk || {}, sim = s.simulation || {}; let title = "Using the real location", sub = s.device ? `${s.device.name} · real GPS${realArea ? " · 📍 near " + realArea.label : ""}` : "", pct = 0, dot = "ok";
     if (s.state !== "ready" && !sim.active) { title = s.error?.message || "No iPhone connected"; sub = s.error?.hint || "Plug the iPhone into the Mac."; dot = s.state === "connecting" ? "busy" : "bad"; }
     else if (sim.reconnecting || w.state === "reconnecting") { title = "Reconnecting to the iPhone…"; dot = "busy"; }
     else if (w.active) {
@@ -75,6 +75,14 @@
       if (following) map.panTo([sim.lat, sim.lon], { animate: false });
     } else if (simMarker) { simMarker.remove(); simMarker = null; }
     $("returnBtn").disabled = !sim.origin || w.active;
+  }
+  // where the Mac is (roughly where the iPhone really is), when nothing is being spoofed
+  let realArea = null, realDot = null;
+  async function loadArea() {
+    try { const w = await api("GET", "/api/where", undefined, { timeout: 10000 }); realArea = w.ok ? w : null; } catch { /* offline */ }
+    if (realArea && map && !status?.simulation?.active) { if (!realDot) realDot = L.circleMarker([realArea.lat, realArea.lon], { radius: 8, color: "#fff", weight: 3, fillColor: "#2f80ed", fillOpacity: 1, interactive: false }).addTo(map); }
+    if (status?.simulation?.active && realDot) { realDot.remove(); realDot = null; }
+    setTimeout(loadArea, 300000);
   }
   let pollTimer = null;
   async function poll() {
@@ -199,7 +207,7 @@
   async function start() {
     $("pair").hidden = true; $("app").hidden = false; initMap();
     try { await api("GET", "/api/remote/me"); } catch (e) { if (e.unauth) return; }
-    loadPhones(); loadLists(); poll(); monitor(); setTimeout(() => map.invalidateSize(), 200);
+    loadPhones(); loadLists(); poll(); monitor(); loadArea(); setTimeout(() => map.invalidateSize(), 200);
   }
   window.addEventListener("resize", () => map && map.invalidateSize());
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && token) poll(); });

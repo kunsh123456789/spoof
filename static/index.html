@@ -7,8 +7,8 @@
   <title>iPhone Location Simulator</title>
   <link rel="icon" href="/static/icon.png">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=34">
-  <link rel="stylesheet" href="/static/fun.css?v=34">
+  <link rel="stylesheet" href="/static/style.css?v=35">
+  <link rel="stylesheet" href="/static/fun.css?v=35">
 </head>
 <body>
   <!-- ======================= top bar ======================= -->
@@ -454,6 +454,8 @@
       <button class="segbtn" data-layer="street">🗺 Street</button><button class="segbtn" data-layer="satellite">🛰 Satellite</button><button class="segbtn" data-layer="topo">⛰ Topo</button>
     </div>
     <p class="muted">Street maps can be saved for offline use; satellite and topo need the internet.</p>
+    <label class="sw"><input type="checkbox" data-setting="show_real_location"><span class="track"></span>
+      <span><b>📍 Show my real location when not spoofing</b><small>A blue dot shows where this Mac is, which is roughly where the iPhone really is. It uses the Mac's location service if allowed, otherwise an approximate city-level spot from your internet address (that lookup contacts ipwho.is). iOS gives a computer no way to read the phone's own GPS.</small></span></label>
     <label class="sw"><input type="checkbox" data-setting="snap_pin"><span class="track"></span>
       <span><b>🧲 Snap pins to roads</b><small>A pin you drop or drag moves to the nearest road or path that makes sense (within 150 m).</small></span></label>
     <label class="sw"><input type="checkbox" data-setting="california_only"><span class="track"></span>
@@ -512,7 +514,7 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/fun.js?v=34"></script>
-  <script src="/static/app.js?v=34"></script>
+  <script src="/static/fun.js?v=35"></script>
+  <script src="/static/app.js?v=35"></script>
 </body>
 </html>

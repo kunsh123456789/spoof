@@ -445,3 +445,6 @@ kbd { font: 600 11.5px ui-monospace, Menlo, monospace; padding: 2px 6px; border-
 #plans .stepline { grid-template-columns: 72px 1fr auto; }
 .steprow .params .row > select { flex: 1 1 100%; }
 .steprow .params .row { align-items: end; }
+
+.real-dot { position: relative; width: 16px; height: 16px; margin: 2px; border-radius: 50%; background: #2f80ed; border: 3px solid #fff; box-shadow: 0 0 0 3px rgba(47,128,237,.35), 0 2px 6px rgba(0,0,0,.4); }
+.real-dot::after { content: ""; position: absolute; inset: -10px; border-radius: 50%; border: 2px solid #2f80ed; animation: simping 2.4s ease-out infinite; }

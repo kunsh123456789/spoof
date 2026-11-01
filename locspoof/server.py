@@ -31,6 +31,7 @@ from .routes import RoutesStore
 from .routing import Router
 from .schedule import SchedulesStore, Scheduler, clean_plan
 from . import battery as battery_mod
+from .locate import IpLocator
 from . import signals as signals_mod
 from .california import CA_BOX
 from .panic import PanicStore
@@ -172,6 +173,7 @@ def create_app(
     panic_path: Optional[Path] = None,
     remote_path: Optional[Path] = None,
     remote_listener=None,
+    locator=None,
     ambient_tick: float = 2.5,
     rng=None,
     tile_client: Optional[httpx.AsyncClient] = None,
@@ -186,6 +188,7 @@ def create_app(
     schedules = SchedulesStore(schedules_path or ROOT / "schedules.json")
     activity = ActivityLog(activity_path or ROOT / "activity.json")
     panic = PanicStore(panic_path or ROOT / "panic.json")
+    ip_locator = locator if locator is not None else IpLocator()
     remote_store = RemoteStore(remote_path or ROOT / "remote.json")
     awake = keep_awake if keep_awake is not None else KeepAwake()
     watch = sleep_watch if sleep_watch is not None else SleepWatch()
@@ -529,6 +532,11 @@ def create_app(
         st["enabled"] = bool(settings.data["keep_awake"])
         st["last_sleep"] = watch.last_sleep
         return st
+
+    @app.get("/api/where")
+    async def where_am_i():
+        """The Mac's approximate area (from its internet address). Not read from the iPhone: iOS does not allow that."""
+        return await ip_locator.where()
 
     @app.get("/api/battery")
     async def get_battery():
