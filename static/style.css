@@ -407,3 +407,41 @@ kbd { font: 600 11.5px ui-monospace, Menlo, monospace; padding: 2px 6px; border-
 .hist li .ts { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hist li[data-level="warn"] .tx { color: var(--warn); } .hist li[data-tag="drop"] .tx, .hist li[data-tag="down"] .tx { color: var(--danger); font-weight: 600; }
 .hist li.daybreak { grid-template-columns: 1fr; text-align: center; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; border: none; }
+
+/* ---- schedule editor: roomier step cards, with a "how long / done by" line ---- */
+.editor { padding: 14px; display: grid; gap: 10px; }
+.editor > * { margin-top: 0; margin-bottom: 0; }
+.editor h2 { margin: 6px 0 0; }
+.editor .row.opts { display: flex; gap: 10px; flex-wrap: wrap; }
+.editor .row.opts > label { flex: 1 1 150px; min-width: 0; }
+#planSteps { display: grid; gap: 12px; }
+.steprow { display: grid; gap: 10px; padding: 12px; margin: 0; border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+.stephdr { display: flex; align-items: center; gap: 8px; }
+.stepno { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--accent-text, #fff); font-size: 12.5px; font-weight: 800; display: grid; place-items: center; }
+.steptools { margin-left: auto; display: flex; gap: 4px; }
+.steptools .miniBtn:disabled { opacity: .3; }
+.steprow .field { display: grid; grid-template-columns: 38px 1fr; gap: 8px; align-items: center; }
+.steprow .flabel { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.steprow .whenbox { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
+.steprow .whenbox select, .steprow .field > select { flex: 1 1 140px; min-width: 0; width: 100%; margin: 0; }
+.steprow .whenbox input[type="time"] { flex: 0 0 118px; width: 118px; margin: 0; }
+.steprow .whenbox .num { display: inline-flex; gap: 6px; align-items: center; flex: 1 1 130px; }
+.steprow .whenbox .num input { width: 72px; flex: none; margin: 0; text-align: center; }
+.steprow .whenbox .num select { flex: 1; min-width: 70px; }
+.steprow .params { margin-top: 0; padding-top: 10px; border-top: 1px dashed var(--border); gap: 10px; }
+.steprow .params .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.steprow .params .row > input { flex: 1 1 150px; min-width: 0; }
+.steprow .params .row > select { flex: 1 1 150px; min-width: 0; }
+.steprow .params .row > label { flex: 1 1 130px; display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.steprow .params .row > label input { width: 100%; }
+.steprow .params label.check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); }
+.steprow .params .muted { margin: 0; font-size: 12.5px; }
+.estimate { padding: 9px 11px; border-radius: 10px; background: var(--tint); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); font-size: 13px; line-height: 1.35; }
+.estimate.unknown { background: none; border-style: dashed; border-color: var(--border); color: var(--muted); }
+.estimate .overlap { margin-top: 6px; color: var(--warn); font-weight: 600; }
+#planSummary { margin: 0; font-size: 13px; }
+#planSummary:empty { display: none; }
+.stepline .note.unknown { color: var(--muted); font-style: italic; }
+#plans .stepline { grid-template-columns: 72px 1fr auto; }
+.steprow .params .row > select { flex: 1 1 100%; }
+.steprow .params .row { align-items: end; }

@@ -955,11 +955,15 @@
       });
       card.append(head, sw);
       const meta = document.createElement("p"); meta.className = "muted"; meta.textContent = `${p.steps.find((s) => s.at) ? dateText(p.steps.find((s) => s.at).at) : "After you activate it"} · runs late steps up to ${p.grace_min} min${p.device ? " · specific phone" : ""}`; card.append(meta);
+      const est = estimateSteps(p.steps.map((s) => ({ startMs: s.at ? Date.parse(s.at) : null, when: s.after_s != null ? "after" : "at", afterVal: s.after_s, afterUnit: 1, type: s.type, params: s.params })), "");
+      const fin = est.map((e) => e.end ?? e.start).filter((x) => x != null);
+      if (fin.length && !est.some((e) => e.secs == null)) { const done = document.createElement("p"); done.className = "muted"; done.textContent = `🕒 Done around ${whenText(Math.max(...fin), p.steps.find((s) => s.at)?.at)} (estimate)`; card.append(done); }
       p.steps.forEach((s) => {
         const line = document.createElement("div"); line.className = "stepline";
         const when = document.createElement("span"); when.className = "when"; when.textContent = s.after_s != null ? `⏱ +${afterText(s.after_s)}` : clockText(s.at);
         if (s.after_s != null) when.title = `${afterText(s.after_s)} after the last move finished`;
         const what = document.createElement("span"); what.textContent = s.title || describeStep(s);
+        const ev = est[p.steps.indexOf(s)]; if (ev) { const l = estimateLine(ev), n = document.createElement("span"); n.className = "note" + (l.cls ? " unknown" : ""); n.textContent = l.text; what.append(n); }
         if (s.note) { const n = document.createElement("span"); n.className = "note"; n.textContent = s.note; what.append(n); }
         const right = document.createElement("span"); right.style.display = "flex"; right.style.gap = "4px"; right.style.alignItems = "center";
         const b = document.createElement("span"); b.className = "sbadge"; b.dataset.s = s.status; b.textContent = STATUS_LABEL[s.status] || s.status;
@@ -1056,27 +1060,113 @@
     }
     return box;
   }
+  // ---- how long each step takes and when it will be done (an estimate from distances, speeds and your settings) ----
+  const ROAD = 1.3;                                           // roads are about 30% longer than the straight line
+  const durText = (s) => (s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)} h ${String(Math.round((s % 3600) / 60)).padStart(2, "0")} min`);
+  const pathLen = (pts) => pts.reduce((a, p, i) => (i ? a + haversine(pts[i - 1], p) : 0), 0);
+  function estimateStep(st, loc) {
+    const p = st.params || {};
+    switch (st.type) {
+      case "set_location": return p.lat === undefined ? { secs: null, note: "Choose a place" } : { secs: 0, loc: [p.lat, p.lon], note: "instant" };
+      case "stop": return { secs: 0, note: "instant" };
+      case "clear": return { secs: 0, loc: null, note: "instant" };
+      case "move_to": {
+        if (p.lat === undefined) return { secs: null, note: "Choose a destination" };
+        const from = p.start ? [p.start.lat, p.start.lon] : loc, speed = Math.max(Number(p.speed_kmh) || 5, 0.5);
+        if (!from) return { secs: null, loc: [p.lat, p.lon], note: "Needs a start place (or the phone's location when it runs)" };
+        const dist = haversine(from, [p.lat, p.lon]) * (p.mode === "straight" ? 1 : ROAD);
+        return { secs: dist / (speed / 3.6), loc: [p.lat, p.lon], note: `${fmtDist(dist)} at ${speed} km/h` };
+      }
+      case "route": {
+        const r = routesCache.find((x) => x.id === p.route_id); if (!r) return { secs: null, note: "Choose a saved route" };
+        if (r.loop) return { secs: null, note: "this route loops until stopped" };
+        const pts = r.kind === "track" ? r.path : r.stops.map((s) => [s.lat, s.lon]), k = r.mode === "straight" || r.kind === "track" ? 1 : ROAD;
+        let dist = pathLen(pts) * k; const first = pts[0];
+        if (p.jump === false && loc && first) dist += haversine(loc, first) * k;
+        if (r.return_to_start && first) dist += haversine(pts[pts.length - 1], first) * k;
+        const dwell = r.kind === "track" ? 0 : r.stops.reduce((a, s) => a + (s.dwell_s || 0), 0), speed = Math.max(r.speed_kmh || 5, 0.5);
+        return { secs: dist / (speed / 3.6) + dwell, loc: r.return_to_start ? first : pts[pts.length - 1], note: `${fmtDist(dist)} at ${speed} km/h${dwell ? ` + ${durText(dwell)} of pauses` : ""}` };
+      }
+      case "trick_or_treat": {
+        if (!p.polygon && p.lat === undefined) return { secs: null, note: "Choose where to trick-or-treat" };
+        const n = Number(p.houses) || 20, off = settings.tot_lights_off ? (settings.tot_lights_off_pct || 0) / 100 : 0, visit = Math.max(1, Math.round(n * (1 - off)));
+        const lo = settings.tot_dwell_min_s ?? 20, hi = Math.max(settings.tot_dwell_max_s ?? 70, lo), kids = !!p.kids;
+        const dwell = visit * (((lo + hi) / 2 + 7 + (p.realistic ? 10 : 0)) * (kids ? 1.6 : 1)), speed = kids ? 3.2 : 4.5;
+        let back = 0; if (settings.tot_start_at_pin !== false) back = p.polygon ? 0.5 * Math.sqrt(Math.max(areaKm2(p.polygon), 0.002) * 1e6) : 0.5 * (Number(p.radius_m) || 350);
+        const dist = (visit * 45 + back) * ROAD, start = p.polygon ? null : [p.lat, p.lon];
+        return { secs: dist / (speed / 3.6) + dwell, loc: settings.tot_start_at_pin !== false && start ? start : undefined, note: `about ${visit} lit houses · ${fmtDist(dist)} walking + ${durText(dwell)} at doors` };
+      }
+    }
+    return { secs: null, note: "" };
+  }
+  // steps: [{when:"at"|"after", time:"HH:MM", afterVal, afterUnit, startMs?, type, params}]. Returns [{start, secs, end, note, overlap}]
+  function estimateSteps(steps, dateStr) {
+    let loc = status?.simulation?.active ? [status.simulation.lat, status.simulation.lon] : null, day = new Date(`${dateStr}T00:00`), prevTime = "", prevEnd = null;
+    return steps.map((st) => {
+      let start = null;
+      if (st.startMs != null) start = st.startMs;
+      else if (st.when === "after") { const w = Math.round(Number(st.afterVal) * (st.afterUnit || 1)); start = prevEnd != null && Number.isFinite(w) ? prevEnd + w * 1000 : null; }
+      else if (st.time && dateStr) { if (prevTime && st.time < prevTime) day.setDate(day.getDate() + 1); prevTime = st.time; start = new Date(`${localDate(day)}T${st.time}`).getTime(); }
+      const e = estimateStep(st, loc); if (e.loc !== undefined) loc = e.loc;
+      const end = start != null && e.secs != null ? start + e.secs * 1000 : null, overlap = prevEnd != null && start != null && prevEnd > start + 1000 ? prevEnd : null;
+      prevEnd = end; return { start, secs: e.secs, end, note: e.note, overlap };
+    });
+  }
+  const whenText = (ms, ref) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + (ref && new Date(ms).toDateString() !== new Date(ref).toDateString() ? ` (${new Date(ms).toLocaleDateString([], { weekday: "short" })})` : "");
+  function estimateLine(e) {
+    if (e.secs == null) return { text: `⏱ Can't estimate yet: ${e.note || "missing details"}`, cls: "unknown" };
+    const dur = e.secs < 1 ? "instant" : `about ${durText(e.secs)}`;
+    return { text: `⏱ ${dur}${e.end != null && e.secs >= 1 ? ` · done around ${whenText(e.end, e.start)}` : ""}${e.note && e.secs >= 1 ? ` · ${e.note}` : ""}`, cls: "" };
+  }
+  function refreshEstimates() {
+    if (!editor) return;
+    const est = estimateSteps(editor.steps, $("planDate").value || localDate()), rows = [...document.querySelectorAll("#planSteps .steprow")];
+    est.forEach((e, i) => {
+      const box = rows[i]?.querySelector(".estimate"); if (!box) return;
+      const l = estimateLine(e); box.className = `estimate ${l.cls}`; box.replaceChildren(document.createTextNode(l.text));
+      if (e.overlap != null) { const w = document.createElement("div"); w.className = "overlap"; w.textContent = `⚠ The step before is still running until about ${whenText(e.overlap, e.start)}, but this one starts at ${whenText(e.start)} and will take over.`; box.append(w); }
+    });
+    const starts = est.map((e) => e.start).filter((x) => x != null), ends = est.map((e) => e.end ?? e.start).filter((x) => x != null), unknown = est.some((e) => e.secs == null);
+    $("planSummary").textContent = starts.length ? `🕒 The plan starts at ${whenText(Math.min(...starts))} and is done around ${whenText(Math.max(...ends), Math.min(...starts))}${unknown ? " (at least; some steps can't be estimated yet)" : ""}. Estimates use straight-line distances plus 30% for roads, so treat them as a guide.` : "";
+  }
+  let estTimer = null;
+  const soonRefresh = () => { clearTimeout(estTimer); estTimer = setTimeout(refreshEstimates, 120); };
+  $("planSteps").addEventListener("input", soonRefresh); $("planSteps").addEventListener("change", soonRefresh); $("planSteps").addEventListener("click", soonRefresh);
+  $("planDate").addEventListener("input", soonRefresh);
+  const STEP_TYPES = [["trick_or_treat", "🎃 Trick or treat"], ["move_to", "🚶 Walk / drive to…"], ["route", "🧭 Saved route"], ["set_location", "📍 Set location"], ["stop", "⏹ Stop moving"], ["clear", "↩ Restore real GPS"]];
   function renderEditorSteps() {
     $("planSteps").replaceChildren(...editor.steps.map((st, i) => {
       const row = document.createElement("div"); row.className = "steprow";
-      const head = document.createElement("div"); head.className = "stephead";
-      const t = document.createElement("input"); t.type = "time"; t.value = st.time; t.oninput = () => (st.time = t.value); t.hidden = st.when === "after";
+      // header: number, what it is, move / remove
+      const head = document.createElement("div"); head.className = "stephdr";
+      const no = document.createElement("span"); no.className = "stepno"; no.textContent = i + 1;
+      const title = document.createElement("b"); title.textContent = STEP_TYPES.find((t) => t[0] === st.type)?.[1] || st.type;
+      const tools = document.createElement("span"); tools.className = "steptools";
+      const swap = (a, b) => { [editor.steps[a], editor.steps[b]] = [editor.steps[b], editor.steps[a]]; renderEditorSteps(); };
+      const up = miniBtn("↑", "Move this step up", () => swap(i, i - 1)), down = miniBtn("↓", "Move this step down", () => swap(i, i + 1)); up.disabled = i === 0; down.disabled = i === editor.steps.length - 1;
+      tools.append(up, down, miniBtn("✕", "Remove this step", () => { editor.steps.splice(i, 1); renderEditorSteps(); }));
+      head.append(no, title, tools);
+      // when
       const wsel = document.createElement("select"); wsel.className = "whensel"; wsel.setAttribute("aria-label", "When this step runs");
-      [["at", "At a time"], ["after", "After the last move"]].forEach(([v, tx]) => { const o = document.createElement("option"); o.value = v; o.textContent = tx; wsel.append(o); });
+      [["at", "At a clock time"], ["after", "After the last move"]].forEach(([v, tx]) => { const o = document.createElement("option"); o.value = v; o.textContent = tx; wsel.append(o); });
       wsel.value = st.when; wsel.onchange = () => { st.when = wsel.value; if (st.when === "at" && !st.time) st.time = addMinutes(editor.steps[i - 1]?.time || "20:00", 30); renderEditorSteps(); };
+      const t = document.createElement("input"); t.type = "time"; t.value = st.time; t.oninput = () => (st.time = t.value); t.hidden = st.when === "after"; t.setAttribute("aria-label", "Start time");
       const aft = document.createElement("span"); aft.className = "num"; aft.hidden = st.when !== "after";
       const av = document.createElement("input"); av.type = "number"; av.min = "1"; av.max = "86400"; av.step = "1"; av.value = st.afterVal; av.setAttribute("aria-label", "How long to wait"); av.oninput = () => (st.afterVal = Number(av.value));
       const au = document.createElement("select"); au.setAttribute("aria-label", "Seconds or minutes");
       [[1, "secs"], [60, "mins"]].forEach(([v, tx]) => { const o = document.createElement("option"); o.value = v; o.textContent = tx; au.append(o); });
-      au.value = st.afterUnit; au.onchange = () => (st.afterUnit = Number(au.value));
-      aft.append(av, au, " after the last move");
-      const sel = document.createElement("select");
-      [["trick_or_treat", "🎃 Trick or treat"], ["move_to", "🚶 Walk / drive to…"], ["route", "🧭 Saved route"], ["set_location", "📍 Set location"], ["stop", "⏹ Stop moving"], ["clear", "↩ Restore real GPS"]]
-        .forEach(([v, tx]) => { const o = document.createElement("option"); o.value = v; o.textContent = tx; sel.append(o); });
+      au.value = st.afterUnit; au.onchange = () => (st.afterUnit = Number(au.value)); aft.append(av, au);
+      const whenBox = document.createElement("div"); whenBox.className = "whenbox"; whenBox.append(wsel, t, aft);
+      const f1 = document.createElement("div"); f1.className = "field"; f1.append(Object.assign(document.createElement("span"), { className: "flabel", textContent: "When" }), whenBox);
+      // action
+      const sel = document.createElement("select"); sel.setAttribute("aria-label", "What this step does");
+      STEP_TYPES.forEach(([v, tx]) => { const o = document.createElement("option"); o.value = v; o.textContent = tx; sel.append(o); });
       sel.value = st.type; sel.onchange = () => { st.type = sel.value; st.params = defaultParams(st.type); renderEditorSteps(); };
-      head.append(wsel, t, aft, sel, miniBtn("✕", "Remove this step", () => { editor.steps.splice(i, 1); renderEditorSteps(); }));
-      row.append(head, renderParams(st)); return row;
+      const f2 = document.createElement("div"); f2.className = "field"; f2.append(Object.assign(document.createElement("span"), { className: "flabel", textContent: "Do" }), sel);
+      const est = document.createElement("div"); est.className = "estimate";
+      row.append(head, f1, f2, renderParams(st), est); return row;
     }));
+    refreshEstimates();
   }
   $("newPlanBtn").onclick = () => { loadRoutes(); loadDevices(); openEditor(null); };
   $("cancelPlanBtn").onclick = closeEditor;

@@ -218,6 +218,10 @@ The tabs sit in the bar at the top of the window (on a phone-sized window they m
      houses, kids / avoid busy roads / realistic), 🚶 walk or drive to an address (path type, speed, **shaky** = GPS noise + uneven pace for
      this walk only, optional start place), 🧭 a saved route, 📍 set a location, ⏹ stop moving, or ↩ restore real GPS. Times after midnight roll
      over to the next day.
+  Every step shows **⏱ how long it will take and when it will be done**, worked out from distances (straight line plus 30% for roads), speeds,
+  pauses and your trick-or-treat settings, and chained through the rest of the plan (a step that waits *after the last move* starts when the one before
+  is estimated to finish). The bottom of the editor says when the whole plan starts and is done, and warns if a step is set to start while the step
+  before it is still running. The same estimates appear on saved plans. They are a guide, not a promise.
   3. **Save plan**, then switch **Activate** on. A plan never runs unless it is activated; editing a plan switches it off again.
   4. At each step's time the app does it, then waits for the next. Each step shows ⏳ waiting / ▶ running / ✅ done / ⚠ failed / 🕘 missed / ⏭ skipped
      with a short note, and **⏵** tests a single step right now. The status bar shows the next step and a countdown.
